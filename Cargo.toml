@@ -1,0 +1,15 @@
+[package]
+name = "arcx"
+version = "0.1.0"
+edition = "2021"
+description = "A convention-over-configuration web framework with AI orchestration capabilities"
+authors = ["name-q <1620206666@qq.com>"]
+
+[dependencies]
+axum = "0.7"
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tower-http = { version = "0.5", features = ["cors", "trace"] }
+tracing = "0.1"
+tracing-subscriber = "0.3"
