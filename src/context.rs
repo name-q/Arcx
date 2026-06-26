@@ -1,5 +1,6 @@
 use axum::extract::{FromRef, FromRequestParts};
 use axum::http::request::Parts;
+use sea_orm::DatabaseConnection;
 use std::sync::Arc;
 
 use crate::config::AppConfig;
@@ -9,20 +10,24 @@ use crate::config::AppConfig;
 #[derive(Clone)]
 pub struct AppState {
     pub config: Arc<AppConfig>,
+    pub db: DatabaseConnection,
 }
 
 impl AppState {
-    pub fn new(config: AppConfig) -> Self {
+    pub fn new(config: AppConfig, db: DatabaseConnection) -> Self {
         Self {
             config: Arc::new(config),
+            db,
         }
     }
 }
 
 /// 请求上下文
-/// 每个 handler 可以直接提取，自动获得 config、service 等访问能力
+/// 每个 handler 可以直接提取，自动获得 config、db 等访问能力
+/// 这是贯穿 Controller / Service 的核心对象
 pub struct Context {
     pub config: Arc<AppConfig>,
+    pub db: DatabaseConnection,
 }
 
 /// 让 Context 能从请求中自动提取
@@ -39,6 +44,7 @@ where
         let app_state = AppState::from_ref(state);
         Ok(Context {
             config: app_state.config,
+            db: app_state.db,
         })
     }
 }

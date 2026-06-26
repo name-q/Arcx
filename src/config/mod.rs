@@ -18,11 +18,18 @@ pub struct AppInfo {
     pub debug: bool,
 }
 
+/// 数据库配置
+#[derive(Debug, Deserialize, Clone)]
+pub struct DatabaseConfig {
+    pub url: String,
+}
+
 /// 顶层配置结构
 #[derive(Debug, Deserialize, Clone)]
 pub struct AppConfig {
     pub server: ServerConfig,
     pub app: AppInfo,
+    pub database: DatabaseConfig,
 }
 
 impl AppConfig {

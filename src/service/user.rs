@@ -1,12 +1,7 @@
-use serde::{Deserialize, Serialize};
+use sea_orm::*;
+use serde::Deserialize;
 
-/// 用户数据结构
-#[derive(Serialize, Clone)]
-pub struct User {
-    pub id: u64,
-    pub name: String,
-    pub email: String,
-}
+use crate::model::user::{self, Entity as UserEntity};
 
 /// 创建用户请求体
 #[derive(Deserialize)]
@@ -20,46 +15,29 @@ pub struct UserService;
 
 impl UserService {
     /// 根据 ID 查找用户
-    pub async fn find_by_id(id: u64) -> Option<User> {
-        // 模拟数据库查询，后续接入真实数据层
-        match id {
-            1 => Some(User {
-                id: 1,
-                name: "Arcx".to_string(),
-                email: "arcx@example.com".to_string(),
-            }),
-            2 => Some(User {
-                id: 2,
-                name: "Kira".to_string(),
-                email: "kira@example.com".to_string(),
-            }),
-            _ => None,
-        }
+    pub async fn find_by_id(db: &DatabaseConnection, id: i64) -> Result<Option<user::Model>, DbErr> {
+        UserEntity::find_by_id(id).one(db).await
     }
 
     /// 获取所有用户
-    pub async fn find_all() -> Vec<User> {
-        vec![
-            User {
-                id: 1,
-                name: "Arcx".to_string(),
-                email: "arcx@example.com".to_string(),
-            },
-            User {
-                id: 2,
-                name: "Kira".to_string(),
-                email: "kira@example.com".to_string(),
-            },
-        ]
+    pub async fn find_all(db: &DatabaseConnection) -> Result<Vec<user::Model>, DbErr> {
+        UserEntity::find().all(db).await
     }
 
     /// 创建用户
-    pub async fn create(dto: CreateUserDto) -> User {
-        // 模拟写入数据库并返回带 ID 的用户
-        User {
-            id: 3, // 模拟自增 ID
-            name: dto.name,
-            email: dto.email,
-        }
+    pub async fn create(db: &DatabaseConnection, dto: CreateUserDto) -> Result<user::Model, DbErr> {
+        let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+        let new_user = user::ActiveModel {
+            name: Set(dto.name),
+            email: Set(dto.email),
+            created_at: Set(now),
+            ..Default::default()
+        };
+        let result = UserEntity::insert(new_user).exec(db).await?;
+        // 返回刚创建的用户
+        UserEntity::find_by_id(result.last_insert_id)
+            .one(db)
+            .await?
+            .ok_or(DbErr::Custom("创建后未找到用户".to_string()))
     }
 }

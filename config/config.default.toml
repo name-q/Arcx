@@ -1,9 +1,11 @@
-# 默认配置 - 所有环境共享的基础配置
+[app]
+name = "Arcx"
+version = "0.1.0"
+debug = false
 
 [server]
 host = "127.0.0.1"
 port = 3000
 
-[app]
-name = "Arcx"
-version = "0.1.0"
+[database]
+url = "sqlite://data.db?mode=rwc"

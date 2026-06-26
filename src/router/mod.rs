@@ -18,5 +18,5 @@ pub fn build(state: AppState) -> Router {
 fn api_routes() -> Router<AppState> {
     Router::new()
         .route("/user", get(controller::user::list).post(controller::user::create))
-        .route("/user/{id}", get(controller::user::info))
+        .route("/user/:id", get(controller::user::info))
 }
