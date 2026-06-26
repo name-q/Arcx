@@ -1,0 +1,7 @@
+# 开发环境配置 - 覆盖默认配置中的开发相关项
+
+[server]
+port = 3000
+
+[app]
+debug = true
