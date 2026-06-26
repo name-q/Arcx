@@ -1,3 +1,10 @@
+//! 配置管理
+//!
+//! - 多环境配置加载（TOML，default → env 合并覆盖）
+//! - 配置热更新通道（watch channel，详见 watcher 模块）
+
+pub mod watcher;
+
 use serde::Deserialize;
 
 use std::fs;

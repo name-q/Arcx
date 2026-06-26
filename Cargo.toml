@@ -44,3 +44,4 @@ tokio-cron-scheduler = "0.15"
 # CLI
 clap = { version = "4", features = ["derive"] }
 futures-util = "0.3.32"
+tokio-stream = { version = "0.1", features = ["sync"] }
