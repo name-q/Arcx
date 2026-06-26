@@ -1,16 +1,17 @@
-//! 用户 Controller（示例）
+//! 用户 Controller（框架示例）
 //! 路由前缀: /api/user
-//! 演示框架的 Controller 写法约定
+//! 演示：路由定义、Context 使用、参数校验
 
 use axum::extract::Path;
 use axum::{routing::get, Json, Router};
 use serde::Deserialize;
+use validator::Validate;
 
 use crate::context::{AppState, Context};
 use crate::error::{AppError, AppResult, success};
+use crate::extract::ValidJson;
 
 /// 注册路由
-/// 约定：每个 controller 暴露此函数，定义该模块下的所有路由
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/", get(list).post(create))
@@ -18,9 +19,7 @@ pub fn routes() -> Router<AppState> {
 }
 
 /// GET /api/user
-/// 获取用户列表
 async fn list(_ctx: Context) -> AppResult<Json<serde_json::Value>> {
-    // 示例数据（实际项目中调用 Service 层）
     let users = vec![
         serde_json::json!({"id": 1, "name": "Alice"}),
         serde_json::json!({"id": 2, "name": "Bob"}),
@@ -29,7 +28,6 @@ async fn list(_ctx: Context) -> AppResult<Json<serde_json::Value>> {
 }
 
 /// GET /api/user/:id
-/// 获取单个用户
 async fn info(_ctx: Context, Path(id): Path<u64>) -> AppResult<Json<serde_json::Value>> {
     if id > 100 {
         return Err(AppError::NotFound(format!("用户 {} 不存在", id)));
@@ -37,24 +35,26 @@ async fn info(_ctx: Context, Path(id): Path<u64>) -> AppResult<Json<serde_json::
     Ok(success(serde_json::json!({"id": id, "name": "Demo User"})))
 }
 
-/// POST /api/user
-/// 创建用户
-#[derive(Deserialize)]
-struct CreateUserRequest {
+/// 创建用户请求体 —— 使用 validator 声明式校验
+#[derive(Deserialize, Validate)]
+struct CreateUserDto {
+    #[validate(length(min = 1, message = "名称不能为空"))]
     name: String,
-    email: Option<String>,
+
+    #[validate(email(message = "邮箱格式不正确"))]
+    email: String,
 }
 
+/// POST /api/user
+/// 演示 ValidJson 自动校验
 async fn create(
     _ctx: Context,
-    Json(body): Json<CreateUserRequest>,
+    body: ValidJson<CreateUserDto>,
 ) -> AppResult<Json<serde_json::Value>> {
-    if body.name.is_empty() {
-        return Err(AppError::BadRequest("name 不能为空".into()));
-    }
+    let dto = body.into_inner();
     Ok(success(serde_json::json!({
         "id": 1,
-        "name": body.name,
-        "email": body.email,
+        "name": dto.name,
+        "email": dto.email,
     })))
 }
