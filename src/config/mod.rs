@@ -39,6 +39,8 @@ pub struct MiddlewareConfig {
     pub cors: bool,
     #[serde(default = "default_true")]
     pub logger: bool,
+    #[serde(default = "default_true")]
+    pub security: bool,
 }
 
 fn default_true() -> bool {
@@ -50,6 +52,7 @@ impl Default for MiddlewareConfig {
         Self {
             cors: true,
             logger: true,
+            security: true,
         }
     }
 }
@@ -61,6 +64,14 @@ pub struct AppConfig {
     pub app: AppInfo,
     #[serde(default)]
     pub middleware: MiddlewareConfig,
+    #[serde(default)]
+    pub logger: crate::logger::LoggerConfig,
+    #[serde(default)]
+    pub httpclient: crate::httpclient::HttpClientConfig,
+    #[serde(default)]
+    pub session: Option<crate::session::SessionConfig>,
+    #[serde(default)]
+    pub security: Option<crate::middleware::security::SecurityConfig>,
 }
 
 impl AppConfig {
@@ -75,6 +86,7 @@ impl AppConfig {
         match name {
             "cors" => self.middleware.cors,
             "logger" => self.middleware.logger,
+            "security" => self.middleware.security,
             _ => false,
         }
     }
@@ -90,7 +102,6 @@ pub fn load_raw_config() -> toml::Value {
 /// 加载并合并配置文件为字符串
 fn load_raw_str() -> String {
     let env = std::env::var("ARCX_ENV").unwrap_or_else(|_| "dev".to_string());
-    tracing::info!("Loading config for environment: {}", env);
 
     // 读取默认配置
     let default_path = "config/config.default.toml";

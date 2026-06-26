@@ -8,10 +8,47 @@ debug = false
 host = "127.0.0.1"
 port = 3000
 
-# === 插件配置 ===
-# 每个插件独立 [plugin.xxx] 段
-# enable = true 启用，false 或不写则禁用
+# === 日志配置 ===
+[logger]
+level = "info"
+dir = "logs"
+enable_console = true
+enable_file = false       # 生产环境设 true
 
+# === HTTP 客户端 ===
+[httpclient]
+timeout = 30
+max_retries = 0
+user_agent = "Arcx/0.1"
+connect_timeout = 10
+
+# === 中间件开关 ===
+[middleware]
+cors = true
+logger = true
+security = true
+
+# === 安全配置 ===
+[security]
+csrf = false              # API 框架默认关闭 CSRF（前后端分离场景）
+xss_protection = true
+frame_deny = true
+content_type_nosniff = true
+hsts = false
+hsts_max_age = 31536000
+csrf_ignore = ["/api/webhook"]
+
+# === Session ===
+# 需要时取消注释
+# [session]
+# secret = "your-secret-key-at-least-32-characters!!"
+# cookie_name = "arcx.sid"
+# max_age = 86400
+# http_only = true
+# secure = false
+# same_site = "lax"
+
+# === 插件配置 ===
 [plugin.database]
 enable = false
 url = "sqlite:./data.db?mode=rwc"

@@ -20,14 +20,13 @@
 
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 
 use async_trait::async_trait;
 use tokio::sync::broadcast;
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::Stream;
 
-use super::{Client, ClientError, ClientErrorKind, Subscriber};
+use super::{Client, ClientError, Subscriber};
 
 /// 示例：内存版 PubSub 客户端
 /// 实际项目中替换为真实的 Redis/NATS/Kafka 实现

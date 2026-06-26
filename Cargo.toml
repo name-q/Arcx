@@ -25,7 +25,8 @@ toml = "0.8"
 tower-http = { version = "0.5", features = ["cors", "trace"] }
 tower = { version = "0.4", features = ["util"] }
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["chrono"] }
+tracing-subscriber = { version = "0.3", features = ["chrono", "env-filter"] }
+tracing-appender = "0.2"
 chrono = "0.4"
 validator = { version = "0.18", features = ["derive"] }
 
@@ -43,5 +44,13 @@ tokio-cron-scheduler = "0.15"
 
 # CLI
 clap = { version = "4", features = ["derive"] }
-futures-util = "0.3.32"
+futures-util = "0.3"
 tokio-stream = { version = "0.1", features = ["sync"] }
+
+# HTTP Client
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+
+# Session & Security
+hmac = "0.12"
+sha2 = "0.10"
+base64 = "0.22"
