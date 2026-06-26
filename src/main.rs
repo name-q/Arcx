@@ -1,10 +1,12 @@
 mod config;
+mod context;
 mod controller;
 mod error;
 mod middleware;
 mod router;
 mod service;
 
+use context::AppState;
 use tracing_subscriber;
 
 #[tokio::main]
@@ -23,8 +25,11 @@ async fn main() {
     tracing::info!("{} v{} starting...", cfg.app.name, cfg.app.version);
     tracing::info!("debug mode: {}", cfg.app.debug);
 
-    // 构建路由（传入配置）
-    let app = router::build();
+    // 构建共享状态
+    let state = AppState::new(cfg.clone());
+
+    // 构建路由（传入状态）
+    let app = router::build(state);
 
     // 启动服务
     let addr = format!("{}:{}", cfg.server.host, cfg.server.port);
