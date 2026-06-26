@@ -1,8 +1,6 @@
-# 生产环境配置
+[app]
+debug = false
+env = "prod"
 
 [server]
 host = "0.0.0.0"
-port = 8080
-
-[app]
-debug = false

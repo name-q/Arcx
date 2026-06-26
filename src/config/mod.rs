@@ -9,33 +9,36 @@ pub struct ServerConfig {
     pub port: u16,
 }
 
-/// 应用配置
+/// 应用信息
 #[derive(Debug, Deserialize, Clone)]
 pub struct AppInfo {
     pub name: String,
     pub version: String,
+    #[serde(default = "default_env")]
+    pub env: String,
     #[serde(default)]
     pub debug: bool,
 }
 
-/// 数据库配置
-#[derive(Debug, Deserialize, Clone)]
-pub struct DatabaseConfig {
-    pub url: String,
+fn default_env() -> String {
+    "dev".to_string()
 }
 
 /// 顶层配置结构
+/// 框架约定：config/ 目录下按环境放置 TOML 配置文件
+/// - config.default.toml  基础配置
+/// - config.dev.toml      开发环境覆盖
+/// - config.prod.toml     生产环境覆盖
 #[derive(Debug, Deserialize, Clone)]
 pub struct AppConfig {
     pub server: ServerConfig,
     pub app: AppInfo,
-    pub database: DatabaseConfig,
 }
 
 impl AppConfig {
     /// 加载配置
-    /// 加载顺序：config.default.toml → config.{env}.toml（覆盖）
-    /// 环境通过 ARCX_ENV 环境变量指定，默认 dev
+    /// 策略：default → env 覆盖合并
+    /// 环境由 ARCX_ENV 环境变量决定（默认 dev）
     pub fn load() -> Self {
         let env = std::env::var("ARCX_ENV").unwrap_or_else(|_| "dev".to_string());
         tracing::info!("Loading config for environment: {}", env);
@@ -57,7 +60,7 @@ impl AppConfig {
     }
 }
 
-/// 简单的 TOML 合并：环境配置覆盖默认配置
+/// TOML 合并：环境配置覆盖默认配置
 fn merge_toml(base: &str, overlay: &str) -> String {
     let mut base_value: toml::Value = toml::from_str(base).expect("Invalid base TOML");
     let overlay_value: toml::Value = toml::from_str(overlay).expect("Invalid overlay TOML");

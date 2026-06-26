@@ -6,26 +6,32 @@ use axum::{
 use serde_json::json;
 
 /// 框架统一错误类型
-/// 所有 Controller 返回 Result<T, AppError> 即可自动转为 JSON 错误响应
+/// Controller 返回 AppResult<T> 即可自动转为规范化的 JSON 错误响应
+///
+/// 约定响应格式：
+/// 成功: { "success": true, "data": ... }
+/// 失败: { "success": false, "error": { "code": 404, "message": "..." } }
 #[derive(Debug)]
 pub enum AppError {
-    /// 资源未找到 (404)
-    NotFound(String),
-    /// 参数校验失败 (400)
+    /// 400 - 参数错误
     BadRequest(String),
-    /// 未授权 (401)
+    /// 401 - 未授权
     Unauthorized(String),
-    /// 内部错误 (500)
+    /// 403 - 禁止访问
+    Forbidden(String),
+    /// 404 - 资源不存在
+    NotFound(String),
+    /// 500 - 内部错误
     Internal(String),
 }
 
-/// 实现 IntoResponse，让 Axum 自动将 AppError 转为 HTTP 响应
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         let (status, message) = match &self {
-            AppError::NotFound(msg) => (StatusCode::NOT_FOUND, msg.clone()),
             AppError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg.clone()),
             AppError::Unauthorized(msg) => (StatusCode::UNAUTHORIZED, msg.clone()),
+            AppError::Forbidden(msg) => (StatusCode::FORBIDDEN, msg.clone()),
+            AppError::NotFound(msg) => (StatusCode::NOT_FOUND, msg.clone()),
             AppError::Internal(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg.clone()),
         };
 
@@ -41,7 +47,7 @@ impl IntoResponse for AppError {
     }
 }
 
-/// 统一成功响应包装
+/// 成功响应包装
 pub fn success<T: serde::Serialize>(data: T) -> Json<serde_json::Value> {
     Json(json!({
         "success": true,
@@ -49,5 +55,5 @@ pub fn success<T: serde::Serialize>(data: T) -> Json<serde_json::Value> {
     }))
 }
 
-/// 类型别名，Controller 统一返回类型
+/// Controller 统一返回类型
 pub type AppResult<T> = Result<T, AppError>;
