@@ -8,10 +8,12 @@ mod lifecycle;
 mod middleware;
 mod plugin;
 mod router;
+mod schedule;
 mod service;
 
 use context::AppState;
 use plugin::PluginManager;
+use schedule::manager::ScheduleManager;
 use std::sync::Arc;
 use tokio::signal;
 use tokio::sync::RwLock;
@@ -36,8 +38,6 @@ async fn main() {
 
     // 初始化插件
     let mut plugin_manager = PluginManager::new();
-    
-    // 自动注册内置插件（根据配置 enable 字段）
     plugin_manager.auto_register_builtin(&raw_config);
 
     if let Err(e) = plugin_manager.init_all(&raw_config).await {
@@ -46,7 +46,30 @@ async fn main() {
     }
 
     // 构建共享状态
-    let state = AppState::with_resources(cfg.clone(), plugin_manager.take_resources());
+    let resources = plugin_manager.take_resources();
+    let state = AppState::with_resources(cfg.clone(), resources.clone());
+
+    // 初始化定时任务系统
+    let schedule_enabled = raw_config
+        .get("schedule")
+        .and_then(|s| s.get("enable"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    let schedule_manager = Arc::new(RwLock::new(ScheduleManager::new()));
+
+    if schedule_enabled {
+        let mut sm = schedule_manager.write().await;
+        // 注册示例任务（用户自定义任务也在此注册）
+        register_schedule_jobs(&mut sm);
+
+        let resources_arc = Arc::new(resources);
+        if let Err(e) = sm.start(Arc::new(cfg.clone()), resources_arc).await {
+            tracing::error!("Schedule start failed: {}", e);
+        }
+    } else {
+        tracing::info!("Schedule system disabled");
+    }
 
     // 生命周期
     let pm = Arc::new(RwLock::new(plugin_manager));
@@ -61,14 +84,25 @@ async fn main() {
 
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
 
+    let sm_shutdown = schedule_manager.clone();
     axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal(lifecycle))
+        .with_graceful_shutdown(shutdown_signal(lifecycle, sm_shutdown))
         .await
         .unwrap();
 }
 
+/// 注册定时任务
+/// 约定：所有定时任务在此统一注册
+fn register_schedule_jobs(sm: &mut ScheduleManager) {
+    // 注册自定义任务
+    sm.register(service::demo_jobs::HealthCheckJob);
+}
+
 /// 监听关闭信号，执行优雅退出
-async fn shutdown_signal(lifecycle: lifecycle::Lifecycle) {
+async fn shutdown_signal(
+    lifecycle: lifecycle::Lifecycle,
+    schedule_manager: Arc<RwLock<ScheduleManager>>,
+) {
     let ctrl_c = async {
         signal::ctrl_c().await.expect("Failed to listen ctrl+c");
     };
@@ -88,6 +122,9 @@ async fn shutdown_signal(lifecycle: lifecycle::Lifecycle) {
         _ = ctrl_c => {},
         _ = terminate => {},
     }
+
+    // 停止定时任务
+    schedule_manager.write().await.shutdown().await;
 
     lifecycle.shutdown().await;
 }

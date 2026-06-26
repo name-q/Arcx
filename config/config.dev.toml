@@ -10,3 +10,6 @@ url = "sqlite:./dev.db?mode=rwc"
 enable = true
 secret = "dev-secret-key-arcx"
 expire = 7200
+
+[schedule]
+enable = true
