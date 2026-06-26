@@ -10,6 +10,7 @@ mod plugin;
 mod router;
 mod schedule;
 mod service;
+mod ws;
 
 use context::AppState;
 use plugin::PluginManager;
