@@ -4,6 +4,17 @@ version = "0.1.0"
 edition = "2021"
 description = "A convention-over-configuration web framework with AI orchestration capabilities"
 authors = ["name-q <1620206666@qq.com>"]
+default-run = "arcx-server"
+
+# 框架服务入口
+[[bin]]
+name = "arcx-server"
+path = "src/main.rs"
+
+# CLI 脚手架工具
+[[bin]]
+name = "arcx"
+path = "src/cli/main.rs"
 
 [dependencies]
 axum = "0.7"
@@ -26,4 +37,9 @@ jsonwebtoken = "9"
 
 # Async trait support
 async-trait = "0.1"
-tokio-cron-scheduler = "0.15.1"
+
+# Schedule
+tokio-cron-scheduler = "0.15"
+
+# CLI
+clap = { version = "4", features = ["derive"] }
