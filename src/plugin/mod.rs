@@ -1,16 +1,20 @@
 //! 插件系统
+//! 
 //! 约定：
 //! - 插件实现 Plugin trait
 //! - 通过 PluginManager 统一管理生命周期
 //! - 配置文件 [plugin.xxx] 段作为插件配置
 //! - 插件可向 Context 注入资源
+//! - 内置插件通过 enable = true 启用，无需手动注册
+
+pub mod builtin;
 
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
 use std::sync::Arc;
 
 /// 插件 trait —— 所有插件必须实现
-#[axum::async_trait]
+#[async_trait::async_trait]
 pub trait Plugin: Send + Sync {
     /// 插件名称（用于日志和配置索引）
     fn name(&self) -> &str;
@@ -67,10 +71,42 @@ impl PluginManager {
         }
     }
 
-    /// 注册插件
+    /// 手动注册插件（用于自定义插件）
     pub fn register(&mut self, plugin: Box<dyn Plugin>) {
         tracing::info!("  Plugin registered: {}", plugin.name());
         self.plugins.push(plugin);
+    }
+
+    /// 自动注册内置插件（根据配置中的 enable 字段）
+    /// 扫描 [plugin.*] 段，对已知的内置插件自动创建实例
+    pub fn auto_register_builtin(&mut self, config: &toml::Value) {
+        let plugin_section = match config.get("plugin").and_then(|v| v.as_table()) {
+            Some(t) => t,
+            None => return,
+        };
+
+        for (name, plugin_config) in plugin_section {
+            let enabled = plugin_config
+                .get("enable")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+
+            if !enabled {
+                continue;
+            }
+
+            match name.as_str() {
+                "database" => {
+                    self.register(Box::new(builtin::database::DatabasePlugin::new()));
+                }
+                "jwt" => {
+                    self.register(Box::new(builtin::jwt::JwtPlugin::new()));
+                }
+                _ => {
+                    tracing::warn!("  Unknown plugin in config: {}", name);
+                }
+            }
+        }
     }
 
     /// 初始化所有已注册的插件

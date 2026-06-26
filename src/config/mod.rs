@@ -1,4 +1,5 @@
 use serde::Deserialize;
+
 use std::fs;
 use std::path::Path;
 
@@ -24,11 +25,35 @@ fn default_env() -> String {
     "dev".to_string()
 }
 
+/// 中间件配置
+#[derive(Debug, Deserialize, Clone)]
+pub struct MiddlewareConfig {
+    #[serde(default = "default_true")]
+    pub cors: bool,
+    #[serde(default = "default_true")]
+    pub logger: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+impl Default for MiddlewareConfig {
+    fn default() -> Self {
+        Self {
+            cors: true,
+            logger: true,
+        }
+    }
+}
+
 /// 顶层配置结构（强类型）
 #[derive(Debug, Deserialize, Clone)]
 pub struct AppConfig {
     pub server: ServerConfig,
     pub app: AppInfo,
+    #[serde(default)]
+    pub middleware: MiddlewareConfig,
 }
 
 impl AppConfig {
@@ -36,6 +61,15 @@ impl AppConfig {
     pub fn load() -> Self {
         let raw = load_raw_str();
         toml::from_str(&raw).expect("Failed to parse config")
+    }
+
+    /// 判断某个中间件是否启用
+    pub fn middleware_enabled(&self, name: &str) -> bool {
+        match name {
+            "cors" => self.middleware.cors,
+            "logger" => self.middleware.logger,
+            _ => false,
+        }
     }
 }
 

@@ -7,3 +7,18 @@ debug = false
 [server]
 host = "127.0.0.1"
 port = 3000
+
+# === 插件配置 ===
+# 每个插件独立 [plugin.xxx] 段
+# enable = true 启用，false 或不写则禁用
+
+[plugin.database]
+enable = false
+url = "sqlite:./data.db?mode=rwc"
+max_connections = 10
+min_connections = 1
+
+[plugin.jwt]
+enable = false
+secret = "change-me-in-production"
+expire = 86400

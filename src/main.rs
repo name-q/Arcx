@@ -3,6 +3,7 @@ mod context;
 mod controller;
 mod error;
 mod extract;
+mod guard;
 mod lifecycle;
 mod middleware;
 mod plugin;
@@ -35,8 +36,9 @@ async fn main() {
 
     // 初始化插件
     let mut plugin_manager = PluginManager::new();
-    // === 注册插件 ===
-    // plugin_manager.register(Box::new(some_plugin));
+    
+    // 自动注册内置插件（根据配置 enable 字段）
+    plugin_manager.auto_register_builtin(&raw_config);
 
     if let Err(e) = plugin_manager.init_all(&raw_config).await {
         tracing::error!("Plugin init failed: {}", e);
