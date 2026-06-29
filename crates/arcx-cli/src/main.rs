@@ -357,7 +357,7 @@ fn cmd_generate_controller(name: &str) {
     ensure_in_project();
     let path = format!("src/controller/{}.rs", name);
     if Path::new(&path).exists() {
-        eprintln!("✗ Controller '{}' already exists at {}", name, path);
+        eprintln!("✗ Controller \'{}\' already exists at {}", name, path);
         std::process::exit(1);
     }
 
@@ -403,9 +403,15 @@ async fn create(Json(body): Json<serde_json::Value>) -> AppResult<Json<serde_jso
     ensure_parent(&path);
     fs::write(&path, &content).unwrap();
     println!("✓ Created: {}", path);
-    println!();
-    println!("  Register in src/controller/mod.rs:");
-    println!("    pub mod {};", name);
+
+    // Auto-register in src/controller/mod.rs
+    auto_register_mod("src/controller/mod.rs", name);
+
+    // Auto-register in src/main.rs register_controllers! macro
+    auto_register_controller_in_main(name);
+
+    println!("✓ Auto-registered in mod.rs and main.rs");
+    println!("  Route: /api/{}", name);
 }
 
 // ─────────────────────────────────────────
@@ -585,6 +591,94 @@ fn cmd_info() {
                 println!("    - {}", entry.file_name().to_string_lossy());
             }
         }
+    }
+}
+
+// ─────────────────────────────────────────
+// Auto-registration helpers
+// ─────────────────────────────────────────
+
+/// 向 mod.rs 中追加 `pub mod <name>;`（如果不存在）
+fn auto_register_mod(mod_path: &str, name: &str) {
+    let mod_file = Path::new(mod_path);
+    if !mod_file.exists() {
+        fs::write(mod_file, format!("pub mod {};\n", name)).unwrap();
+        return;
+    }
+
+    let content = fs::read_to_string(mod_file).unwrap();
+    let mod_line = format!("pub mod {};", name);
+
+    // 已注册则跳过
+    if content.lines().any(|l| l.trim() == mod_line) {
+        return;
+    }
+
+    // 追加到末尾
+    let mut new_content = content.trim_end().to_string();
+    new_content.push_str(&format!("\npub mod {};\n", name));
+    fs::write(mod_file, new_content).unwrap();
+}
+
+/// 在 main.rs 的 register_controllers! 宏调用中追加新 controller
+fn auto_register_controller_in_main(name: &str) {
+    let main_path = Path::new("src/main.rs");
+    if !main_path.exists() {
+        eprintln!("  ⚠ src/main.rs not found, skip auto-register in main");
+        return;
+    }
+
+    let content = fs::read_to_string(main_path).unwrap();
+
+    // 匹配 register_controllers!(AppState, controller, ...) 模式
+    // 支持多行和尾部逗号
+    if let Some(start) = content.find("register_controllers!") {
+        // 找到对应的闭合括号
+        let from_macro = &content[start..];
+        let mut depth = 0;
+        let mut end_offset = 0;
+        for (i, ch) in from_macro.char_indices() {
+            match ch {
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end_offset = i;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if end_offset == 0 {
+            eprintln!("  ⚠ Could not parse register_controllers! macro");
+            return;
+        }
+
+        let macro_content = &from_macro[..end_offset + 1];
+
+        // 检查是否已经包含这个 controller
+        if macro_content.contains(&format!(", {}", name))
+            || macro_content.contains(&format!(",{}", name))
+        {
+            return; // 已注册
+        }
+
+        // 在闭合括号前插入 ", name"
+        let inner = &from_macro[..end_offset];
+        let new_macro = format!("{}, {})", inner.trim_end(), name);
+
+        let new_content = format!(
+            "{}{}{}",
+            &content[..start],
+            new_macro,
+            &content[start + end_offset + 1..]
+        );
+
+        fs::write(main_path, new_content).unwrap();
+    } else {
+        eprintln!("  ⚠ register_controllers! not found in main.rs, skip auto-register");
     }
 }
 
