@@ -1,0 +1,16 @@
+[package]
+name = "arcx-cli"
+version = "0.1.0"
+edition = "2021"
+description = "CLI tool for Arcx framework - project scaffolding and code generation"
+authors = ["name-q <1620206666@qq.com>"]
+license = "MIT"
+repository = "https://github.com/name-q/Arcx"
+keywords = ["cli", "framework", "scaffold", "generator"]
+
+[[bin]]
+name = "arcx"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }

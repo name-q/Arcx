@@ -94,14 +94,20 @@ dependencies = [
 ]
 
 [[package]]
-name = "arcx"
+name = "arcx-cli"
+version = "0.1.0"
+dependencies = [
+ "clap",
+]
+
+[[package]]
+name = "arcx-core"
 version = "0.1.0"
 dependencies = [
  "async-trait",
  "axum",
  "base64",
  "chrono",
- "clap",
  "futures-util",
  "hmac",
  "jsonwebtoken",
@@ -119,6 +125,20 @@ dependencies = [
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
+ "validator",
+]
+
+[[package]]
+name = "arcx-demo"
+version = "0.1.0"
+dependencies = [
+ "arcx-core",
+ "async-trait",
+ "axum",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
  "validator",
 ]
 

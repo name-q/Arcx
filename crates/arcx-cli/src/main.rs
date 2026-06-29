@@ -82,7 +82,6 @@ fn main() {
 
 fn cmd_new(name: &str) {
     let project_path = Path::new(name);
-    // 提取项目名（最后一段路径）
     let project_name = project_path
         .file_name()
         .and_then(|n| n.to_str())
@@ -101,10 +100,6 @@ fn cmd_new(name: &str) {
         "src/controller",
         "src/service",
         "src/model",
-        "src/middleware",
-        "src/plugin",
-        "src/schedule",
-        "src/guard",
         "config",
     ];
     for dir in &dirs {
@@ -119,13 +114,14 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-arcx = "0.1"
+arcx-core = "0.1"
 tokio = {{ version = "1", features = ["full"] }}
 serde = {{ version = "1", features = ["derive"] }}
 serde_json = "1"
 tracing = "0.1"
 validator = {{ version = "0.18", features = ["derive"] }}
 async-trait = "0.1"
+axum = {{ version = "0.7", features = ["ws"] }}
 "#
     );
     fs::write(project_path.join("Cargo.toml"), cargo_toml).unwrap();
@@ -146,33 +142,37 @@ port = 3000
 [middleware]
 cors = true
 logger = true
+security = true
+
+[logger]
+level = "info"
+enable_console = true
+enable_file = false
+
+[httpclient]
+timeout = 30
+max_retries = 0
+
+[security]
+csrf = false
 
 [schedule]
 enable = false
 
-# 数据库插件（按需启用）
 # [plugin.database]
 # enable = true
 # url = "sqlite:./data.db?mode=rwc"
-# max_connections = 10
 
-# JWT 鉴权插件（按需启用）
 # [plugin.jwt]
 # enable = true
-# secret = "your-secret-key"
-# expire_hours = 24
+# secret = "change-me-in-production-at-least-32-chars"
+# expire = 86400
 "#
     );
-    fs::write(
-        project_path.join("config/config.default.toml"),
-        default_config,
-    )
-    .unwrap();
+    fs::write(project_path.join("config/config.default.toml"), default_config).unwrap();
 
     // config/config.prod.toml
-    let prod_config = r#"# 生产环境配置（覆盖 default）
-
-[app]
+    let prod_config = r#"[app]
 env = "prod"
 
 [server]
@@ -180,62 +180,104 @@ host = "0.0.0.0"
 port = 8080
 
 [middleware]
-logger = true
 cors = false
+
+[logger]
+level = "info"
+enable_file = true
+dir = "logs"
+
+[security]
+csrf = true
+hsts = true
 "#;
     fs::write(project_path.join("config/config.prod.toml"), prod_config).unwrap();
 
     // src/main.rs
     let main_rs = format!(
-        r#"//! {project_name} - Powered by Arcx Framework
+        r#"//! {project_name} — Powered by Arcx Framework
 
 mod controller;
 mod service;
 
+use arcx_core::prelude::*;
+
 #[tokio::main]
 async fn main() {{
-    // 初始化日志
-    tracing_subscriber::fmt()
-        .with_target(false)
-        .with_timer(tracing_subscriber::fmt::time::ChronoLocal::rfc_3339())
-        .init();
+    // 1. 加载配置
+    let cfg = Arcx::load_config();
 
-    tracing::info!("{project_name} starting...");
+    // 2. 初始化日志
+    arcx_core::logger::init(&cfg.logger);
+    tracing::info!("{{}} v{{}} starting...", cfg.app.name, cfg.app.version);
 
-    // TODO: 初始化框架并启动服务
-    // 详细用法参考 Arcx 文档
-    tracing::info!("{project_name} ready");
+    // 3. 加载插件
+    let raw_config = Arcx::load_raw_config();
+    let mut plugin_manager = PluginManager::new();
+    plugin_manager.auto_register_builtin(&raw_config);
+    if let Err(e) = plugin_manager.init_all(&raw_config).await {{
+        tracing::error!("Plugin init failed: {{}}", e);
+        std::process::exit(1);
+    }}
+
+    // 4. 构建 HttpClient
+    let http_client = HttpClient::new(cfg.httpclient.clone());
+
+    // 5. 构建事件总线 & 配置热更新
+    let event_bus = EventBus::new(128);
+    let (_notifier, config_watcher) = ConfigWatcher::new(cfg.clone());
+
+    // 6. 构建共享状态
+    let mut resources = plugin_manager.take_resources();
+    resources.insert(
+        std::any::TypeId::of::<HttpClient>(),
+        std::sync::Arc::new(http_client),
+    );
+    let state = AppState::with_resources(cfg.clone(), resources, event_bus.clone(), config_watcher);
+
+    // 7. 构建路由
+    let public = arcx_core::register_controllers!(AppState, controller, home);
+    let api = axum::Router::new().nest("/api", public);
+    let app = apply_global_middleware(api, &cfg).with_state(state);
+
+    // 8. 启动服务
+    let addr = format!("{{}}:{{}}", cfg.server.host, cfg.server.port);
+    tracing::info!("Server running at http://{{}}", addr);
+
+    let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
+    axum::serve(listener, app)
+        .with_graceful_shutdown(async {{
+            tokio::signal::ctrl_c().await.ok();
+            tracing::info!("Shutting down...");
+        }})
+        .await
+        .unwrap();
+
+    plugin_manager.shutdown_all().await;
 }}
 "#
     );
     fs::write(project_path.join("src/main.rs"), main_rs).unwrap();
 
     // src/controller/mod.rs
-    let controller_mod = r#"//! Controller 层
-//! 约定：每个文件对应一个资源，文件名即路由前缀
-//! 例: user.rs → /api/user
-
-pub mod home;
+    let controller_mod = r#"pub mod home;
 "#;
     fs::write(project_path.join("src/controller/mod.rs"), controller_mod).unwrap();
 
-    // src/controller/home.rs (示例 controller)
+    // src/controller/home.rs
     let home_controller = format!(
-        r#"//! Home Controller
-//! 路由前缀: /api/home
+        r#"use axum::{{routing::get, Json, Router}};
+use arcx_core::prelude::*;
 
-use axum::{{routing::get, Json, Router}};
-use serde_json::{{json, Value}};
-
-pub fn routes() -> Router {{
+pub fn routes() -> Router<AppState> {{
     Router::new()
         .route("/", get(index))
 }}
 
-/// GET /api/home
-async fn index() -> Json<Value> {{
+async fn index(ctx: Context) -> Json<serde_json::Value> {{
     Json(json!({{
-        "name": "{project_name}",
+        "name": ctx.config.app.name,
+        "version": ctx.config.app.version,
         "message": "Welcome to Arcx!"
     }}))
 }}
@@ -246,24 +288,12 @@ async fn index() -> Json<Value> {{
     // src/service/mod.rs
     fs::write(
         project_path.join("src/service/mod.rs"),
-        "//! Service 层\n//! 约定：每个 service 封装一组业务逻辑\n",
-    )
-    .unwrap();
-
-    // src/model/mod.rs
-    fs::write(
-        project_path.join("src/model/mod.rs"),
-        "//! Model 层\n//! 约定：每个 model 对应一张表（SeaORM Entity）\n",
+        "// Service 层：封装业务逻辑\n",
     )
     .unwrap();
 
     // .gitignore
-    let gitignore = r#"target/
-*.db
-.idea/
-.env
-.DS_Store
-"#;
+    let gitignore = "target/\n*.db\n.env\n.DS_Store\nlogs/\n";
     fs::write(project_path.join(".gitignore"), gitignore).unwrap();
 
     // README.md
@@ -275,30 +305,47 @@ Built with [Arcx](https://github.com/name-q/Arcx) framework.
 ## Quick Start
 
 ```bash
-# 开发模式
-arcx dev
+cargo run
+```
 
-# 生成 controller
+## Development
+
+```bash
+# Install CLI
+cargo install arcx-cli
+
+# Generate code
 arcx g c article
-
-# 生成 service
 arcx g s article
 
-# 构建发布
-cargo build --release
+# Hot reload (requires cargo-watch)
+arcx dev
+```
+
+## Project Structure
+
+```
+src/
+├── main.rs           # Entry point
+├── controller/       # Route handlers (one file per resource)
+├── service/          # Business logic
+└── model/            # Database entities
+config/
+├── config.default.toml
+└── config.prod.toml
 ```
 "#
     );
     fs::write(project_path.join("README.md"), readme).unwrap();
 
-    println!("  ✓ Created project structure");
-    println!("  ✓ Created config files");
-    println!("  ✓ Created example controller");
+    println!("  ✓ Project structure created");
+    println!("  ✓ Config files generated");
+    println!("  ✓ Example controller ready");
     println!();
     println!("  Next steps:");
     println!();
     println!("    cd {}", name);
-    println!("    arcx dev");
+    println!("    cargo run");
     println!();
 }
 
@@ -317,55 +364,38 @@ fn cmd_generate_controller(name: &str) {
     let struct_name = to_pascal_case(name);
     let content = format!(
         r#"//! {struct_name} Controller
-//! 路由前缀: /api/{name}
+//! Routes: /api/{name}
 
 use axum::{{
-    extract::{{Path, State}},
+    extract::Path,
     routing::{{get, post}},
     Json, Router,
 }};
-use serde_json::{{json, Value}};
+use arcx_core::prelude::*;
 
-use crate::context::AppState;
-use crate::error::{{AppResult, success}};
-
-/// 公开路由
+/// Public routes
 pub fn routes() -> Router<AppState> {{
     Router::new()
         .route("/", get(list))
         .route("/:id", get(detail))
 }}
 
-/// 受保护路由（需要登录）
+/// Protected routes (require auth)
 pub fn protected_routes() -> Router<AppState> {{
     Router::new()
         .route("/", post(create))
 }}
 
-/// GET /api/{name}
-async fn list() -> AppResult<Json<Value>> {{
-    Ok(success(json!({{
-        "items": [],
-        "total": 0
-    }})))
+async fn list() -> AppResult<Json<serde_json::Value>> {{
+    Ok(success(json!({{ "items": [], "total": 0 }})))
 }}
 
-/// GET /api/{name}/:id
-async fn detail(Path(id): Path<u64>) -> AppResult<Json<Value>> {{
-    Ok(success(json!({{
-        "id": id,
-        "message": "{name} detail"
-    }})))
+async fn detail(Path(id): Path<u64>) -> AppResult<Json<serde_json::Value>> {{
+    Ok(success(json!({{ "id": id }})))
 }}
 
-/// POST /api/{name}
-async fn create(
-    Json(body): Json<Value>,
-) -> AppResult<Json<Value>> {{
-    Ok(success(json!({{
-        "message": "{name} created",
-        "data": body
-    }})))
+async fn create(Json(body): Json<serde_json::Value>) -> AppResult<Json<serde_json::Value>> {{
+    Ok(success(json!({{ "created": body }})))
 }}
 "#
     );
@@ -376,10 +406,6 @@ async fn create(
     println!();
     println!("  Register in src/controller/mod.rs:");
     println!("    pub mod {};", name);
-    println!();
-    println!("  Register in src/router/mod.rs:");
-    println!("    register_controllers!({}, ...);", name);
-    println!("    register_protected_controllers!(state, {}, ...);", name);
 }
 
 // ─────────────────────────────────────────
@@ -397,11 +423,6 @@ fn cmd_generate_service(name: &str) {
     let struct_name = to_pascal_case(name);
     let content = format!(
         r#"//! {struct_name} Service
-//!
-//! 约定：
-//! - Service 封装具体的业务逻辑
-//! - Controller 调用 Service，Service 调用 Model/外部接口
-//! - Service 之间可以互相调用
 
 use sea_orm::DatabaseConnection;
 use std::sync::Arc;
@@ -415,15 +436,11 @@ impl {struct_name}Service {{
         Self {{ db }}
     }}
 
-    /// 查询列表
     pub async fn find_all(&self) -> Result<Vec<serde_json::Value>, String> {{
-        // TODO: 实现查询逻辑
         Ok(vec![])
     }}
 
-    /// 根据 ID 查询
-    pub async fn find_by_id(&self, id: u64) -> Result<Option<serde_json::Value>, String> {{
-        // TODO: 实现查询逻辑
+    pub async fn find_by_id(&self, _id: u64) -> Result<Option<serde_json::Value>, String> {{
         Ok(None)
     }}
 }}
@@ -452,9 +469,7 @@ fn cmd_generate_model(name: &str) {
 
     let struct_name = to_pascal_case(name);
     let content = format!(
-        r#"//! {struct_name} Model
-//!
-//! 对应数据库表: {name}
+        r#"//! {struct_name} Entity (SeaORM)
 
 use sea_orm::entity::prelude::*;
 use serde::{{Deserialize, Serialize}};
@@ -464,6 +479,7 @@ use serde::{{Deserialize, Serialize}};
 pub struct Model {{
     #[sea_orm(primary_key)]
     pub id: i64,
+    pub name: String,
     pub created_at: DateTimeUtc,
     pub updated_at: DateTimeUtc,
 }}
@@ -497,30 +513,24 @@ fn cmd_generate_job(name: &str) {
 
     let struct_name = to_pascal_case(name);
     let content = format!(
-        r#"//! {struct_name} 定时任务
-//!
-//! 约定：
-//! - 实现 ScheduleJob trait
-//! - cron 表达式为 6 位（秒 分 时 日 月 周）
-//! - 通过 JobContext 访问共享资源
+        r#"//! {struct_name} Job
 
-use crate::schedule::{{JobContext, ScheduleJob}};
+use arcx_core::prelude::*;
 
 pub struct {struct_name}Job;
 
-#[async_trait::async_trait]
+#[async_trait]
 impl ScheduleJob for {struct_name}Job {{
     fn name(&self) -> &str {{
         "{name}"
     }}
 
     fn cron(&self) -> &str {{
-        "0 */5 * * * *" // 每5分钟执行一次
+        "0 */5 * * * *" // every 5 minutes
     }}
 
     async fn run(&self, _ctx: &JobContext) {{
         tracing::info!("[{struct_name}Job] executing");
-        // TODO: 实现任务逻辑
     }}
 }}
 "#
@@ -530,8 +540,8 @@ impl ScheduleJob for {struct_name}Job {{
     fs::write(&path, content).unwrap();
     println!("✓ Created: {}", path);
     println!();
-    println!("  Register schedule job in main.rs:");
-    println!("    schedule_manager.register({struct_name}Job);");
+    println!("  Register in main.rs:");
+    println!("    schedule_manager.register({}Job);", struct_name);
 }
 
 // ─────────────────────────────────────────
@@ -542,7 +552,6 @@ fn cmd_dev(port: u16) {
     println!("⚡ Starting Arcx dev server on port {}...", port);
     println!();
 
-    // 检查是否有 cargo-watch
     let has_watch = Command::new("cargo")
         .args(["watch", "--version"])
         .output()
@@ -555,15 +564,7 @@ fn cmd_dev(port: u16) {
         println!();
 
         let status = Command::new("cargo")
-            .args([
-                "watch",
-                "-x",
-                "run --bin arcx-server",
-                "-w",
-                "src",
-                "-w",
-                "config",
-            ])
+            .args(["watch", "-x", "run", "-w", "src", "-w", "config"])
             .env("ARCX_PORT", port.to_string())
             .status()
             .expect("Failed to start cargo-watch");
@@ -575,7 +576,7 @@ fn cmd_dev(port: u16) {
         println!();
 
         let status = Command::new("cargo")
-            .args(["run", "--bin", "arcx-server"])
+            .args(["run"])
             .env("ARCX_PORT", port.to_string())
             .status()
             .expect("Failed to start server");
@@ -591,29 +592,16 @@ fn cmd_dev(port: u16) {
 fn cmd_info() {
     ensure_in_project();
 
-    // 读取 Cargo.toml 提取信息
     let cargo_content = fs::read_to_string("Cargo.toml").unwrap_or_default();
     let mut project_name = "unknown".to_string();
     let mut version = "unknown".to_string();
 
     for line in cargo_content.lines() {
         if line.starts_with("name") {
-            project_name = line
-                .split('=')
-                .nth(1)
-                .unwrap_or("")
-                .trim()
-                .trim_matches('"')
-                .to_string();
+            project_name = line.split('=').nth(1).unwrap_or("").trim().trim_matches('"').to_string();
         }
         if line.starts_with("version") && version == "unknown" {
-            version = line
-                .split('=')
-                .nth(1)
-                .unwrap_or("")
-                .trim()
-                .trim_matches('"')
-                .to_string();
+            version = line.split('=').nth(1).unwrap_or("").trim().trim_matches('"').to_string();
         }
     }
 
@@ -621,52 +609,42 @@ fn cmd_info() {
     println!("  Version: {}", version);
     println!();
 
-    // 统计文件数
     let controllers = count_rs_files("src/controller");
     let services = count_rs_files("src/service");
     let models = count_rs_files("src/model");
-    let middleware = count_rs_files("src/middleware");
 
     println!("  Controllers: {}", controllers);
     println!("  Services:    {}", services);
     println!("  Models:      {}", models);
-    println!("  Middleware:   {}", middleware);
     println!();
 
-    // 检查配置文件
-    let config_dir = Path::new("config");
-    if config_dir.exists() {
+    if Path::new("config").exists() {
         println!("  Config files:");
-        if let Ok(entries) = fs::read_dir(config_dir) {
+        if let Ok(entries) = fs::read_dir("config") {
             for entry in entries.flatten() {
-                let name = entry.file_name();
-                println!("    - {}", name.to_string_lossy());
+                println!("    - {}", entry.file_name().to_string_lossy());
             }
         }
     }
 }
 
 // ─────────────────────────────────────────
-// 工具函数
+// Helpers
 // ─────────────────────────────────────────
 
-/// 确保文件的父目录存在
 fn ensure_parent(path: &str) {
     if let Some(parent) = Path::new(path).parent() {
         fs::create_dir_all(parent).ok();
     }
 }
 
-/// 确保在项目目录内执行
 fn ensure_in_project() {
     if !Path::new("Cargo.toml").exists() {
         eprintln!("✗ Not in a Rust project directory (no Cargo.toml found)");
-        eprintln!("  Run this command from your project root.");
         std::process::exit(1);
     }
 }
 
-/// 下划线转 PascalCase
 fn to_pascal_case(s: &str) -> String {
     s.split('_')
         .map(|part| {
@@ -679,16 +657,12 @@ fn to_pascal_case(s: &str) -> String {
         .collect()
 }
 
-/// 统计目录下 .rs 文件数量（排除 mod.rs）
 fn count_rs_files(dir: &str) -> usize {
     let path = Path::new(dir);
-    if !path.exists() {
-        return 0;
-    }
+    if !path.exists() { return 0; }
     fs::read_dir(path)
         .map(|entries| {
-            entries
-                .flatten()
+            entries.flatten()
                 .filter(|e| {
                     let name = e.file_name().to_string_lossy().to_string();
                     name.ends_with(".rs") && name != "mod.rs"

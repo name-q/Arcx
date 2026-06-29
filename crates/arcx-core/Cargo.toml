@@ -1,0 +1,58 @@
+[package]
+name = "arcx-core"
+version = "0.1.0"
+edition = "2021"
+description = "Arcx - A convention-over-configuration web framework for Rust with AI orchestration capabilities"
+authors = ["name-q <1620206666@qq.com>"]
+license = "MIT"
+repository = "https://github.com/name-q/Arcx"
+keywords = ["web", "framework", "axum", "convention", "ai"]
+categories = ["web-programming::http-server"]
+
+[dependencies]
+# Web
+axum = { version = "0.7", features = ["ws"] }
+tokio = { version = "1", features = ["full"] }
+tower-http = { version = "0.5", features = ["cors", "trace"] }
+tower = { version = "0.4", features = ["util"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["chrono", "env-filter"] }
+tracing-appender = "0.2"
+chrono = "0.4"
+
+# Validation
+validator = { version = "0.18", features = ["derive"] }
+
+# Database (optional)
+sea-orm = { version = "1.0", features = ["sqlx-sqlite", "runtime-tokio-rustls", "macros"], optional = true }
+
+# JWT
+jsonwebtoken = "9"
+
+# Async
+async-trait = "0.1"
+futures-util = "0.3"
+tokio-stream = { version = "0.1", features = ["sync"] }
+
+# Schedule
+tokio-cron-scheduler = "0.15"
+
+# HTTP Client
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+
+# Session & Security
+hmac = "0.12"
+sha2 = "0.10"
+base64 = "0.22"
+
+[features]
+default = ["database"]
+database = ["sea-orm"]
+full = ["database"]

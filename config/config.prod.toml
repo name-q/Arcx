@@ -1,6 +1,0 @@
-[app]
-debug = false
-env = "prod"
-
-[server]
-host = "0.0.0.0"
