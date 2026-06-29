@@ -1,13 +1,15 @@
-//! 路由声明
-//!
-//! 集中声明所有路由，一目了然。
+//! 路由声明 — 自由组合，想怎么写怎么写
 
 use arcx_core::prelude::*;
 use crate::controller;
 
 pub fn routes(r: &mut ArcxRouter) {
-    // RESTful 资源路由
-    r.resources("/api/home", controller::home::handlers());
+    // 自由声明路由
+    r.get("/api/home", controller::home::index);
+    r.get("/api/home/:id", controller::home::show);
+    r.post("/api/home", controller::home::create);
+    r.put("/api/home/:id", controller::home::update);
+    r.delete("/api/home/:id", controller::home::destroy);
 
     // 单独路由
     r.get("/api/health", controller::health::check);

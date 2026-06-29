@@ -1,25 +1,28 @@
 # arcx-core
 
-The core framework library for [Arcx](https://github.com/name-q/Arcx) — a convention-over-configuration web framework for Rust with AI orchestration capabilities.
+The core library of **Arcx** — a convention-over-configuration web framework for Rust built on [Axum](https://github.com/tokio-rs/axum).
 
 ## Features
 
-- **Convention over configuration** — sensible defaults, override only what you need
-- **Minimal boilerplate** — 3-line `main.rs`, centralized route declarations
-- **RESTful resources** — declare a resource, get CRUD routes automatically
-- **Plugin system** — database, JWT, and custom plugins with dependency injection
-- **Built-in security** — CORS, CSRF, security headers, auth guards
-- **Full observability** — structured logging, trace IDs, request logging
-- **Developer experience** — config hot-reload, event bus, graceful shutdown
+- **Free-style routing** — `r.get/post/put/delete` with any handler signature
+- **Zero-boilerplate controllers** — pure async functions, no traits needed
+- **Flexible responses** — return any `impl IntoResponse`, no forced format
+- **Plugin system** — Database, JWT, custom plugins with resource injection
+- **Auto middleware** — CORS, logging, security headers, configurable
+- **Multi-env config** — TOML config with environment-based overrides
+- **Error handling** — `AppError` with proper HTTP status codes (400/401/404/422/500)
+- **Route guards** — `guarded_scope` for authenticated routes
+- **Validation** — `ValidJson<T>` with validator derive macros
+- **And more** — WebSocket, Schedule jobs, EventBus, HttpClient, Session
 
 ## Quick Start
 
 ```rust
-// main.rs
-mod controller;
-mod router;
-
 use arcx_core::prelude::*;
+
+mod controller;
+mod helper;
+mod router;
 
 #[tokio::main]
 async fn main() {
@@ -30,101 +33,76 @@ async fn main() {
 }
 ```
 
+### router.rs — Free-style routing
+
 ```rust
-// router.rs
 use arcx_core::prelude::*;
 use crate::controller;
 
 pub fn routes(r: &mut ArcxRouter) {
-    r.resources("/api/user", controller::user::handlers());
-    r.get("/api/health", controller::health::check);
+    r.get("/api/home", controller::home::index);
+    r.get("/api/home/:id", controller::home::show);
+    r.post("/api/home", controller::home::create);
+    r.put("/api/home/:id", controller::home::update);
+    r.delete("/api/home/:id", controller::home::destroy);
+
+    // Authenticated routes
+    r.guarded_scope("/api/admin", |s| {
+        s.get("/dashboard", controller::admin::dashboard);
+    });
 }
 ```
 
-```rust
-// controller/user.rs
-use arcx_core::prelude::*;
-
-pub async fn index(_ctx: Context) -> AppResult<Json<Value>> {
-    Ok(success(json!({ "users": [] })))
-}
-
-pub async fn show(_ctx: Context, Path(id): Path<u64>) -> AppResult<Json<Value>> {
-    Ok(success(json!({ "id": id })))
-}
-
-pub fn handlers() -> ResourceHandlers {
-    ResourceHandlers::new()
-        .index(index)
-        .show(show)
-}
-```
-
-## Route Conventions
-
-`r.resources("/api/user", handlers)` maps:
-
-| Handler | HTTP Method | Path |
-|---------|-------------|------|
-| `index` | GET | `/api/user` |
-| `show` | GET | `/api/user/:id` |
-| `create` | POST | `/api/user` |
-| `update` | PUT | `/api/user/:id` |
-| `destroy` | DELETE | `/api/user/:id` |
-
-Only registered handlers get routes. No handler = no route. No warnings.
-
-## Configuration
-
-```toml
-# config/config.default.toml
-[app]
-name = "my-app"
-version = "0.1.0"
-env = "dev"
-
-[server]
-host = "127.0.0.1"
-port = 3000
-
-[middleware]
-cors = true
-logger = true
-security = true
-
-[plugin.database]
-enable = true
-url = "sqlite:./data.db?mode=rwc"
-
-[plugin.jwt]
-enable = true
-secret = "your-secret-key"
-expire = 86400
-```
-
-## Architecture
-
-```
-Request → Middleware (CORS/Logger/Security)
-        → Router (ArcxRouter)
-        → Guard (optional auth)
-        → Controller (handler fn)
-        → Service (business logic)
-        → Plugin resources (DB, cache, etc.)
-```
-
-## Plugin System
+### controller — Pure functions, any params
 
 ```rust
 use arcx_core::prelude::*;
+use crate::helper;
 
-// Access plugin resources in controllers
-pub async fn index(ctx: Context) -> AppResult<Json<Value>> {
-    let db = ctx.resource::<DatabaseConnection>().unwrap();
-    // ...
+pub async fn index(ctx: Context) -> AppResult<impl IntoResponse> {
+    Ok(helper::success(json!({ "message": "Hello!" })))
+}
+
+pub async fn show(_ctx: Context, Path(id): Path<u64>) -> AppResult<impl IntoResponse> {
+    Ok(helper::success(json!({ "id": id })))
+}
+
+pub async fn create(_ctx: Context, Json(body): Json<Value>) -> AppResult<impl IntoResponse> {
+    Ok(helper::created(json!({ "item": body })))
 }
 ```
 
-## License
+### helper.rs — Your response format (customizable)
 
-MIT
+```rust
+pub fn success<T: Serialize>(data: T) -> impl IntoResponse {
+    Json(json!({ "code": 0, "data": data, "message": "success" }))
+}
+
+pub fn created<T: Serialize>(data: T) -> impl IntoResponse {
+    (StatusCode::CREATED, Json(json!({ "code": 0, "data": data, "message": "created" })))
+}
+
+pub fn no_content() -> impl IntoResponse {
+    StatusCode::NO_CONTENT
+}
+```
+
+The `helper.rs` is **your code** — modify it freely. The framework doesn't depend on it.
+
+### Error handling
+
+```rust
+// Throw errors anywhere in controller/service
+return Err(AppError::not_found("User not found"));
+return Err(AppError::bad_request("Invalid parameter"));
+return Err(AppError::unauthorized("Login required"));
+return Err(AppError::validation(vec![
+    FieldError { field: "title".into(), message: "required".into(), code: "missing_field".into() }
+]));
+```
+
+## Links
+
+- [GitHub](https://github.com/name-q/Arcx)
+- [arcx-cli](https://crates.io/crates/arcx-cli) — CLI scaffolding tool

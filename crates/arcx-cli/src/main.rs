@@ -196,6 +196,7 @@ hsts = true
         r#"//! {project_name} — Powered by Arcx
 
 mod controller;
+mod helper;
 mod router;
 
 use arcx_core::prelude::*;
@@ -211,14 +212,89 @@ async fn main() {{
     );
     fs::write(project_path.join("src/main.rs"), main_rs).unwrap();
 
+    // src/helper.rs
+    let helper_rs = r#"//! 响应 Helper — 项目的响应格式约定，按需修改
+//!
+//! 这是你的项目代码，框架不依赖它。你可以：
+//! - 修改 JSON 结构
+//! - 添加自己的响应方法
+//! - 或者完全不用它，直接返回 axum 原生类型
+
+#![allow(dead_code)]
+
+use axum::http::StatusCode;
+use axum::response::IntoResponse;
+use axum::Json;
+use serde::Serialize;
+use serde_json::json;
+
+/// 成功响应（200）
+pub fn success<T: Serialize>(data: T) -> impl IntoResponse {
+    Json(json!({
+        "code": 0,
+        "data": data,
+        "message": "success"
+    }))
+}
+
+/// 成功响应 + 自定义消息
+pub fn success_msg<T: Serialize>(data: T, msg: &str) -> impl IntoResponse {
+    Json(json!({
+        "code": 0,
+        "data": data,
+        "message": msg
+    }))
+}
+
+/// 创建成功（201）
+pub fn created<T: Serialize>(data: T) -> impl IntoResponse {
+    (StatusCode::CREATED, Json(json!({
+        "code": 0,
+        "data": data,
+        "message": "created"
+    })))
+}
+
+/// 无内容（204）
+pub fn no_content() -> impl IntoResponse {
+    StatusCode::NO_CONTENT
+}
+
+/// 分页响应
+pub fn paginate<T: Serialize>(list: Vec<T>, total: u64, page: u64, page_size: u64) -> impl IntoResponse {
+    Json(json!({
+        "code": 0,
+        "data": {
+            "list": list,
+            "total": total,
+            "page": page,
+            "page_size": page_size
+        }
+    }))
+}
+
+/// 业务失败（200 但 code != 0）
+pub fn fail(code: i32, msg: &str) -> impl IntoResponse {
+    Json(json!({
+        "code": code,
+        "message": msg
+    }))
+}
+"#;
+    fs::write(project_path.join("src/helper.rs"), helper_rs).unwrap();
+
     // src/router.rs
-    let router_rs = r#"//! 路由声明
+    let router_rs = r#"//! 路由声明 — 自由组合
 
 use arcx_core::prelude::*;
 use crate::controller;
 
 pub fn routes(r: &mut ArcxRouter) {
-    r.resources("/api/home", controller::home::handlers());
+    r.get("/api/home", controller::home::index);
+    r.get("/api/home/:id", controller::home::show);
+    r.post("/api/home", controller::home::create);
+    r.put("/api/home/:id", controller::home::update);
+    r.delete("/api/home/:id", controller::home::destroy);
 }
 "#;
     fs::write(project_path.join("src/router.rs"), router_rs).unwrap();
@@ -227,31 +303,42 @@ pub fn routes(r: &mut ArcxRouter) {
     fs::write(project_path.join("src/controller/mod.rs"), "pub mod home;\n").unwrap();
 
     // src/controller/home.rs
-    let home_controller = r#"//! Home Controller
+    let home_controller = format!(
+        r#"//! Home Controller
 
 use arcx_core::prelude::*;
+use crate::helper;
 
 /// GET /api/home
-pub async fn index(ctx: Context) -> AppResult<Json<Value>> {
-    Ok(success(json!({
+pub async fn index(ctx: Context) -> AppResult<impl IntoResponse> {{
+    Ok(helper::success(json!({{
         "name": ctx.config.app.name,
         "version": ctx.config.app.version,
         "message": "Welcome to Arcx!"
-    })))
-}
+    }})))
+}}
 
 /// GET /api/home/:id
-pub async fn show(_ctx: Context, Path(id): Path<u64>) -> AppResult<Json<Value>> {
-    Ok(success(json!({ "id": id })))
-}
+pub async fn show(_ctx: Context, Path(id): Path<u64>) -> AppResult<impl IntoResponse> {{
+    Ok(helper::success(json!({{ "id": id }})))
+}}
 
-/// 导出 handlers
-pub fn handlers() -> ResourceHandlers {
-    ResourceHandlers::new()
-        .index(index)
-        .show(show)
-}
-"#;
+/// POST /api/home
+pub async fn create(_ctx: Context, Json(body): Json<Value>) -> AppResult<impl IntoResponse> {{
+    Ok(helper::created(json!({{ "item": body }})))
+}}
+
+/// PUT /api/home/:id
+pub async fn update(_ctx: Context, Path(id): Path<u64>, Json(body): Json<Value>) -> AppResult<impl IntoResponse> {{
+    Ok(helper::success(json!({{ "id": id, "updated": body }})))
+}}
+
+/// DELETE /api/home/:id
+pub async fn destroy(_ctx: Context, Path(_id): Path<u64>) -> AppResult<impl IntoResponse> {{
+    Ok(helper::no_content())
+}}
+"#
+    );
     fs::write(
         project_path.join("src/controller/home.rs"),
         home_controller,
@@ -299,8 +386,9 @@ arcx g s user
 
 ```
 src/
-├── main.rs           # Entry point (3 lines)
-├── router.rs         # Route declarations (centralized)
+├── main.rs           # Entry point
+├── router.rs         # Route declarations (free style)
+├── helper.rs         # Response helpers (customizable)
 ├── controller/       # Handler functions
 ├── service/          # Business logic
 └── model/            # Database entities
@@ -338,43 +426,33 @@ fn cmd_generate_controller(name: &str) {
     let struct_name = to_pascal_case(name);
     let content = format!(
         r#"//! {struct_name} Controller
-//! Routes: /api/{name}
 
 use arcx_core::prelude::*;
+use crate::helper;
 
 /// GET /api/{name}
-pub async fn index(_ctx: Context) -> AppResult<Json<Value>> {{
-    Ok(success(json!({{ "items": [], "total": 0 }})))
+pub async fn index(_ctx: Context) -> AppResult<impl IntoResponse> {{
+    Ok(helper::success(json!({{ "items": [], "total": 0 }})))
 }}
 
 /// GET /api/{name}/:id
-pub async fn show(_ctx: Context, Path(id): Path<u64>) -> AppResult<Json<Value>> {{
-    Ok(success(json!({{ "id": id }})))
+pub async fn show(_ctx: Context, Path(id): Path<u64>) -> AppResult<impl IntoResponse> {{
+    Ok(helper::success(json!({{ "id": id }})))
 }}
 
 /// POST /api/{name}
-pub async fn create(_ctx: Context, Json(body): Json<Value>) -> AppResult<Json<Value>> {{
-    Ok(success(json!({{ "created": body }})))
+pub async fn create(_ctx: Context, Json(body): Json<Value>) -> AppResult<impl IntoResponse> {{
+    Ok(helper::created(json!({{ "item": body }})))
 }}
 
 /// PUT /api/{name}/:id
-pub async fn update(_ctx: Context, Path(id): Path<u64>, Json(body): Json<Value>) -> AppResult<Json<Value>> {{
-    Ok(success(json!({{ "id": id, "updated": body }})))
+pub async fn update(_ctx: Context, Path(id): Path<u64>, Json(body): Json<Value>) -> AppResult<impl IntoResponse> {{
+    Ok(helper::success(json!({{ "id": id, "updated": body }})))
 }}
 
 /// DELETE /api/{name}/:id
-pub async fn destroy(_ctx: Context, Path(id): Path<u64>) -> AppResult<Json<Value>> {{
-    Ok(success(json!({{ "id": id, "deleted": true }})))
-}}
-
-/// 导出 handlers
-pub fn handlers() -> ResourceHandlers {{
-    ResourceHandlers::new()
-        .index(index)
-        .show(show)
-        .create(create)
-        .update(update)
-        .destroy(destroy)
+pub async fn destroy(_ctx: Context, Path(_id): Path<u64>) -> AppResult<impl IntoResponse> {{
+    Ok(helper::no_content())
 }}
 "#
     );
@@ -609,7 +687,7 @@ fn auto_register_mod(mod_path: &str, name: &str) {
     fs::write(mod_file, new_content).unwrap();
 }
 
-/// 在 router.rs 中追加资源路由声明
+/// 在 router.rs 中追加自由路由声明
 fn auto_register_in_router(name: &str) {
     let router_path = Path::new("src/router.rs");
     if !router_path.exists() {
@@ -620,19 +698,17 @@ fn auto_register_in_router(name: &str) {
     let content = fs::read_to_string(router_path).unwrap();
 
     // 检查是否已注册
-    let route_line = format!("controller::{}::handlers()", name);
-    if content.contains(&route_line) {
+    if content.contains(&format!("controller::{}::", name)) {
         return;
     }
 
     // 找到 routes 函数的最后一个 } 之前插入
-    // 策略：找最后一个 `}` 前面插入新行
     if let Some(last_brace) = content.rfind('}') {
-        let new_line = format!(
-            "    r.resources(\"/api/{}\", controller::{}::handlers());\n",
-            name, name
+        let new_lines = format!(
+            "\n    // {name} routes\n    r.get(\"/api/{name}\", controller::{name}::index);\n    r.get(\"/api/{name}/:id\", controller::{name}::show);\n    r.post(\"/api/{name}\", controller::{name}::create);\n    r.put(\"/api/{name}/:id\", controller::{name}::update);\n    r.delete(\"/api/{name}/:id\", controller::{name}::destroy);\n",
         );
-        let new_content = format!("{}{}{}", &content[..last_brace], new_line, &content[last_brace..]);
+        let new_content =
+            format!("{}{}{}", &content[..last_brace], new_lines, &content[last_brace..]);
         fs::write(router_path, new_content).unwrap();
     } else {
         eprintln!("  ⚠ Could not parse router.rs, skip auto-register");

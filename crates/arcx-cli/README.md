@@ -1,6 +1,6 @@
 # arcx-cli
 
-CLI scaffolding tool for [Arcx](https://github.com/name-q/Arcx) framework.
+CLI scaffolding tool for **Arcx** — a convention-over-configuration web framework for Rust.
 
 ## Install
 
@@ -13,59 +13,52 @@ cargo install arcx-cli
 ### Create a new project
 
 ```bash
-arcx new my-app
-cd my-app
+arcx new myapp
+cd myapp
 cargo run
 ```
 
 Generated structure:
 
 ```
-my-app/
+myapp/
 ├── src/
-│   ├── main.rs           # 3-line entry point
-│   ├── router.rs         # Centralized route declarations
+│   ├── main.rs           # Entry point
+│   ├── router.rs         # Route declarations (free style)
+│   ├── helper.rs         # Response helpers (customizable)
 │   ├── controller/
 │   │   └── home.rs       # Example controller
 │   └── service/
 ├── config/
 │   ├── config.default.toml
 │   └── config.prod.toml
-├── Cargo.toml
-└── README.md
+└── Cargo.toml
 ```
 
 ### Generate code
 
 ```bash
-# Generate a controller (auto-registered in mod.rs + router.rs)
+# Generate controller (alias: g c)
 arcx g c user
+# → Creates src/controller/user.rs
+# → Auto-registers in mod.rs and router.rs
 
-# Generate a service
+# Generate service (alias: g s)
 arcx g s user
 
-# Generate a model (SeaORM entity)
+# Generate model (alias: g m)
 arcx g m user
 
-# Generate a scheduled job
+# Generate schedule job (alias: g j)
 arcx g j cleanup
 ```
 
-### Development server
+### Development server (hot reload)
 
 ```bash
-# Start with hot-reload (watches src/ and config/)
 arcx dev
-
-# Specify port
-arcx dev -p 8080
+arcx dev -p 8080  # custom port
 ```
-
-Hot-reload behavior:
-- `.rs` files changed → incremental compile + restart
-- `config/*.toml` changed → signal process to reload config
-- `Cargo.toml` changed → full rebuild + restart
-- Compile errors → old process keeps running
 
 ### Project info
 
@@ -73,16 +66,42 @@ Hot-reload behavior:
 arcx info
 ```
 
-## How code generation works
+## Generated Controller Style
 
-`arcx g c user` does three things:
+Controllers are pure async functions with free parameter signatures:
 
-1. Creates `src/controller/user.rs` with RESTful handlers
-2. Adds `pub mod user;` to `src/controller/mod.rs`
-3. Adds `r.resources("/api/user", controller::user::handlers());` to `src/router.rs`
+```rust
+use arcx_core::prelude::*;
+use crate::helper;
 
-Zero manual wiring needed.
+pub async fn index(_ctx: Context) -> AppResult<impl IntoResponse> {
+    Ok(helper::success(json!({ "items": [], "total": 0 })))
+}
 
-## License
+pub async fn show(_ctx: Context, Path(id): Path<u64>) -> AppResult<impl IntoResponse> {
+    Ok(helper::success(json!({ "id": id })))
+}
 
-MIT
+pub async fn create(_ctx: Context, Json(body): Json<Value>) -> AppResult<impl IntoResponse> {
+    Ok(helper::created(json!({ "item": body })))
+}
+```
+
+## Generated Router Style
+
+Routes are declared freely — no forced RESTful conventions:
+
+```rust
+pub fn routes(r: &mut ArcxRouter) {
+    r.get("/api/user", controller::user::index);
+    r.get("/api/user/:id", controller::user::show);
+    r.post("/api/user", controller::user::create);
+    r.post("/api/user/login", controller::user::login);
+    r.put("/api/user/:id/avatar", controller::user::upload_avatar);
+}
+```
+
+## Links
+
+- [GitHub](https://github.com/name-q/Arcx)
+- [arcx-core](https://crates.io/crates/arcx-core) — Framework core library

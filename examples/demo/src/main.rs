@@ -1,6 +1,7 @@
 //! Arcx Demo Application
 
 mod controller;
+mod helper;
 mod router;
 
 use arcx_core::prelude::*;

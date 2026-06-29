@@ -1,6 +1,6 @@
 [package]
 name = "arcx-core"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 description = "Arcx - A convention-over-configuration web framework for Rust with AI orchestration capabilities"
 authors = ["name-q <1620206666@qq.com>"]

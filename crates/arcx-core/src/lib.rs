@@ -43,7 +43,7 @@ pub mod prelude {
     pub use crate::Arcx;
     pub use crate::config::AppConfig;
     pub use crate::context::{AppState, Context};
-    pub use crate::error::{AppError, AppResult, success};
+    pub use crate::error::{AppError, AppResult, FieldError};
     pub use crate::extract::ValidJson;
     pub use crate::guard::{auth_guard, CurrentUser};
     pub use crate::httpclient::HttpClient;
@@ -61,6 +61,8 @@ pub mod prelude {
     // Re-export 常用第三方依赖
     pub use axum;
     pub use axum::extract::Path;
+    pub use axum::http::StatusCode;
+    pub use axum::response::IntoResponse;
     pub use axum::Json;
     pub use async_trait::async_trait;
     pub use serde::{Deserialize, Serialize};
@@ -68,6 +70,10 @@ pub mod prelude {
     pub use validator::Validate;
     pub use tracing;
     pub use tokio;
+
+    // 保留旧的 success 导出（已标记 deprecated）
+    #[allow(deprecated)]
+    pub use crate::error::success;
 }
 
 use std::any::TypeId;

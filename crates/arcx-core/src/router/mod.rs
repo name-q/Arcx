@@ -1,6 +1,6 @@
 //! 路由系统
 //!
-//! 提供集中式路由注册和 RESTful 资源路由约定。
+//! 提供完全自由的路由注册方式。
 //!
 //! ## 用户使用方式
 //!
@@ -10,8 +10,15 @@
 //! use crate::controller;
 //!
 //! pub fn routes(r: &mut ArcxRouter) {
-//!     r.resources("/api/user", controller::user::handlers());
-//!     r.get("/api/health", controller::health::check);
+//!     r.get("/api/home", controller::home::index);
+//!     r.get("/api/home/:id", controller::home::show);
+//!     r.post("/api/home", controller::home::create);
+//!
+//!     // 需要鉴权的路由分组
+//!     r.scope("/api/admin", |s| {
+//!         s.guard(AuthGuard);
+//!         s.get("/dashboard", controller::admin::dashboard);
+//!     });
 //! }
 //! ```
 
@@ -23,7 +30,7 @@ use axum::{
 
 use crate::context::AppState;
 
-/// RESTful 资源处理器集合
+/// RESTful 资源处理器集合（可选快捷方式）
 ///
 /// 通过 builder 模式收集约定方法：
 /// - index   → GET    /{prefix}
@@ -32,16 +39,7 @@ use crate::context::AppState;
 /// - update  → PUT    /{prefix}/:id
 /// - destroy → DELETE /{prefix}/:id
 ///
-/// ## 用法
-///
-/// ```rust
-/// pub fn handlers() -> ResourceHandlers {
-///     ResourceHandlers::new()
-///         .index(index)
-///         .show(show)
-///         .create(create)
-/// }
-/// ```
+/// 注意：这是可选的便利写法，推荐直接用 r.get/post/put/delete 自由组合。
 pub struct ResourceHandlers {
     pub index: Option<MethodRouter<AppState>>,
     pub show: Option<MethodRouter<AppState>>,
@@ -112,18 +110,30 @@ impl ResourceHandlers {
     }
 }
 
+impl Default for ResourceHandlers {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Arcx 路由注册器
 ///
-/// 用户在 `router.rs` 中通过此结构体声明所有路由。
-/// 框架负责将其转化为 axum Router 并自动挂载中间件/守卫。
+/// 在 `router.rs` 中通过此结构体自由声明所有路由。
 ///
 /// ## 示例
 ///
 /// ```rust
 /// pub fn routes(r: &mut ArcxRouter) {
-///     r.resources("/api/user", controller::user::handlers());
-///     r.guarded_resources("/api/admin", controller::admin::handlers());
-///     r.get("/api/health", controller::health::check);
+///     r.get("/api/home", controller::home::index);
+///     r.get("/api/home/:id", controller::home::show);
+///     r.post("/api/home", controller::home::create);
+///     r.put("/api/home/:id", controller::home::update);
+///     r.delete("/api/home/:id", controller::home::destroy);
+///
+///     // 鉴权分组
+///     r.guarded_scope("/api/admin", |s| {
+///         s.get("/dashboard", controller::admin::dashboard);
+///     });
 /// }
 /// ```
 pub struct ArcxRouter {
@@ -141,7 +151,7 @@ impl ArcxRouter {
         }
     }
 
-    // ─── 公开路由 ───────────────────────────
+    // ─── 公开路由方法 ───────────────────────────
 
     /// GET 路由
     pub fn get<H, T>(&mut self, path: &str, handler: H) -> &mut Self
@@ -193,55 +203,35 @@ impl ArcxRouter {
         self
     }
 
-    // ─── 守卫路由（需鉴权）───────────────────────────
+    // ─── 路由分组 ───────────────────────────
 
-    /// 需要鉴权的 GET 路由
-    pub fn guarded_get<H, T>(&mut self, path: &str, handler: H) -> &mut Self
-    where
-        H: Handler<T, AppState> + Clone + Send + 'static,
-        T: 'static,
-    {
-        self.guarded_router = std::mem::take(&mut self.guarded_router).route(path, routing::get(handler));
+    /// 路由分组（共享前缀）
+    pub fn scope(&mut self, prefix: &str, f: impl FnOnce(&mut ArcxRouter)) -> &mut Self {
+        let mut sub = ArcxRouter::new();
+        f(&mut sub);
+        self.router = std::mem::take(&mut self.router).nest(prefix, sub.router);
+        if sub.has_guarded {
+            self.guarded_router =
+                std::mem::take(&mut self.guarded_router).nest(prefix, sub.guarded_router);
+            self.has_guarded = true;
+        }
+        self
+    }
+
+    /// 需要鉴权的路由分组（分组内所有路由自动加鉴权守卫）
+    pub fn guarded_scope(&mut self, prefix: &str, f: impl FnOnce(&mut ArcxRouter)) -> &mut Self {
+        let mut sub = ArcxRouter::new();
+        f(&mut sub);
+        // 把 sub 的公开路由合并到 guarded_router（因为整个 scope 都需要鉴权）
+        self.guarded_router =
+            std::mem::take(&mut self.guarded_router).nest(prefix, sub.router);
         self.has_guarded = true;
         self
     }
 
-    /// 需要鉴权的 POST 路由
-    pub fn guarded_post<H, T>(&mut self, path: &str, handler: H) -> &mut Self
-    where
-        H: Handler<T, AppState> + Clone + Send + 'static,
-        T: 'static,
-    {
-        self.guarded_router = std::mem::take(&mut self.guarded_router).route(path, routing::post(handler));
-        self.has_guarded = true;
-        self
-    }
+    // ─── RESTful 资源路由（可选快捷方式）───────────────────────────
 
-    /// 需要鉴权的 PUT 路由
-    pub fn guarded_put<H, T>(&mut self, path: &str, handler: H) -> &mut Self
-    where
-        H: Handler<T, AppState> + Clone + Send + 'static,
-        T: 'static,
-    {
-        self.guarded_router = std::mem::take(&mut self.guarded_router).route(path, routing::put(handler));
-        self.has_guarded = true;
-        self
-    }
-
-    /// 需要鉴权的 DELETE 路由
-    pub fn guarded_delete<H, T>(&mut self, path: &str, handler: H) -> &mut Self
-    where
-        H: Handler<T, AppState> + Clone + Send + 'static,
-        T: 'static,
-    {
-        self.guarded_router = std::mem::take(&mut self.guarded_router).route(path, routing::delete(handler));
-        self.has_guarded = true;
-        self
-    }
-
-    // ─── RESTful 资源路由 ───────────────────────────
-
-    /// 注册公开的 RESTful 资源路由
+    /// 注册 RESTful 资源路由（可选快捷方式）
     ///
     /// 根据 ResourceHandlers 中注册的方法自动映射路由：
     /// - index   → GET    {prefix}
@@ -259,21 +249,10 @@ impl ArcxRouter {
     /// 注册需要鉴权的 RESTful 资源路由
     pub fn guarded_resources(&mut self, prefix: &str, handlers: ResourceHandlers) -> &mut Self {
         let resource_router = Self::build_resource_router(handlers);
-        self.guarded_router = std::mem::take(&mut self.guarded_router).nest(prefix, resource_router);
+        self.guarded_router =
+            std::mem::take(&mut self.guarded_router).nest(prefix, resource_router);
         self.has_guarded = true;
         tracing::info!("  Guarded Resource: {}", prefix);
-        self
-    }
-
-    /// 路由分组（共享前缀）
-    pub fn scope(&mut self, prefix: &str, f: impl FnOnce(&mut ArcxRouter)) -> &mut Self {
-        let mut sub = ArcxRouter::new();
-        f(&mut sub);
-        self.router = std::mem::take(&mut self.router).nest(prefix, sub.router);
-        if sub.has_guarded {
-            self.guarded_router = std::mem::take(&mut self.guarded_router).nest(prefix, sub.guarded_router);
-            self.has_guarded = true;
-        }
         self
     }
 
@@ -357,35 +336,9 @@ impl Default for ArcxRouter {
 
 // ─── 旧宏（deprecated，向后兼容）───────────────────────────
 
-/// 约定式 Controller 注册宏（已废弃，请使用 ArcxRouter）
+/// 注册 controller 路由（已废弃，请使用 Arcx::new().routes() 方式）
 #[macro_export]
+#[deprecated(since = "0.1.1", note = "Use Arcx::new().routes(router::routes) instead")]
 macro_rules! register_controllers {
-    ($state_type:ty, $base:ident, $( $module:ident ),* $(,)?) => {{
-        let mut router: axum::Router<$state_type> = axum::Router::new();
-        $(
-            let prefix = concat!("/", stringify!($module));
-            let sub_routes = $base::$module::routes();
-            $crate::prelude::tracing::info!("  Controller loaded: {} → /api{}", stringify!($module), prefix);
-            router = router.nest(prefix, sub_routes);
-        )*
-        router
-    }};
-}
-
-/// 注册受保护路由（已废弃，请使用 ArcxRouter::guarded_resources）
-#[macro_export]
-macro_rules! register_protected_controllers {
-    ($state_type:ty, $state:expr, $base:ident, $( $module:ident ),* $(,)?) => {{
-        let mut router: axum::Router<$state_type> = axum::Router::new();
-        $(
-            let prefix = concat!("/", stringify!($module));
-            let sub_routes = $base::$module::protected_routes();
-            $crate::prelude::tracing::info!("  Protected routes: {} → /api{}", stringify!($module), prefix);
-            router = router.nest(prefix, sub_routes);
-        )*
-        router.route_layer(axum::middleware::from_fn_with_state(
-            $state.clone(),
-            $crate::guard::auth_guard,
-        ))
-    }};
+    ($($controller:path),* $(,)?) => {};
 }
