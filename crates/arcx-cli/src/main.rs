@@ -10,9 +10,9 @@
 //! - arcx info                       显示项目信息
 
 use clap::{Parser, Subcommand};
+mod dev;
 use std::fs;
 use std::path::Path;
-use std::process::Command;
 
 #[derive(Parser)]
 #[command(name = "arcx", version, about = "Arcx framework CLI tool")]
@@ -71,7 +71,7 @@ fn main() {
             GenerateTarget::Model { name } => cmd_generate_model(&name),
             GenerateTarget::Job { name } => cmd_generate_job(&name),
         },
-        Commands::Dev { port } => cmd_dev(port),
+        Commands::Dev { port } => dev::run(port),
         Commands::Info => cmd_info(),
     }
 }
@@ -544,193 +544,6 @@ impl ScheduleJob for {struct_name}Job {{
     println!("    schedule_manager.register({}Job);", struct_name);
 }
 
-// ─────────────────────────────────────────
-// arcx dev
-// ─────────────────────────────────────────
-
-fn cmd_dev(cli_port: u16) {
-    use notify_debouncer_mini::{new_debouncer, DebouncedEventKind};
-    use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::{mpsc, Arc};
-    use std::time::Duration;
-
-    // 读取配置文件中的端口，CLI 参数优先
-    let port = if cli_port != 3000 {
-        cli_port
-    } else {
-        read_config_port().unwrap_or(3000)
-    };
-
-    println!("⚡ Starting Arcx dev server on port {}...", port);
-    println!("  Hot reload enabled (watching src/ and config/)");
-    println!();
-
-    // Ctrl+C 信号
-    let running = Arc::new(AtomicBool::new(true));
-    let r = running.clone();
-    ctrlc::set_handler(move || {
-        r.store(false, Ordering::SeqCst);
-    })
-    .expect("Failed to set Ctrl+C handler");
-
-    // 首次编译运行
-    let mut child = build_and_run(port);
-
-    // 设置文件监听（500ms 防抖）
-    let (tx, rx) = mpsc::channel();
-    let mut debouncer = new_debouncer(Duration::from_millis(500), tx)
-        .expect("Failed to create file watcher");
-
-    for dir in &["src", "config"] {
-        let path = Path::new(dir);
-        if path.exists() {
-            debouncer
-                .watcher()
-                .watch(path, notify::RecursiveMode::Recursive)
-                .ok();
-        }
-    }
-
-    // 事件循环
-    while running.load(Ordering::SeqCst) {
-        match rx.recv_timeout(Duration::from_millis(300)) {
-            Ok(Ok(events)) => {
-                let relevant = events.iter().any(|e| {
-                    matches!(e.kind, DebouncedEventKind::Any)
-                        && e.path
-                            .extension()
-                            .map(|ext| ext == "rs" || ext == "toml")
-                            .unwrap_or(false)
-                });
-
-                if relevant {
-                    println!();
-                    println!("  ⟳ File changed, rebuilding...");
-                    kill_child(&mut child);
-                    child = build_and_run(port);
-                }
-            }
-            Ok(Err(errs)) => {
-                eprintln!("  Watch error: {:?}", errs);
-            }
-            Err(mpsc::RecvTimeoutError::Timeout) => {
-                // 检查子进程是否意外退出（编译错误导致启动失败等）
-                if let Ok(Some(status)) = child.try_wait() {
-                    if !status.success() {
-                        eprintln!("  ✗ Process exited ({}), waiting for changes...", status);
-                        // 阻塞等文件变化
-                        wait_for_change(&rx, &running);
-                        if running.load(Ordering::SeqCst) {
-                            println!("  ⟳ File changed, rebuilding...");
-                            child = build_and_run(port);
-                        }
-                    }
-                }
-            }
-            Err(mpsc::RecvTimeoutError::Disconnected) => break,
-        }
-    }
-
-    // 清理
-    kill_child(&mut child);
-    println!("\n  Stopped.");
-}
-
-/// 阻塞等待一次有效文件变化
-fn wait_for_change(
-    rx: &std::sync::mpsc::Receiver<
-        Result<Vec<notify_debouncer_mini::DebouncedEvent>, notify::Error>,
-    >,
-    running: &std::sync::Arc<std::sync::atomic::AtomicBool>,
-) {
-    use notify_debouncer_mini::DebouncedEventKind;
-    use std::sync::atomic::Ordering;
-    use std::time::Duration;
-
-    loop {
-        if !running.load(Ordering::SeqCst) {
-            return;
-        }
-        match rx.recv_timeout(Duration::from_millis(500)) {
-            Ok(Ok(events)) => {
-                let relevant = events.iter().any(|e| {
-                    matches!(e.kind, DebouncedEventKind::Any)
-                        && e.path
-                            .extension()
-                            .map(|ext| ext == "rs" || ext == "toml")
-                            .unwrap_or(false)
-                });
-                if relevant {
-                    return;
-                }
-            }
-            Ok(Err(_)) => {}
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
-            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return,
-        }
-    }
-}
-
-fn build_and_run(port: u16) -> std::process::Child {
-    let build_status = Command::new("cargo")
-        .args(["build"])
-        .status()
-        .expect("Failed to run cargo build");
-
-    if !build_status.success() {
-        eprintln!("  ✗ Build failed, fix errors and save to retry");
-        // 返回一个占位进程，让主循环继续监听
-        return Command::new("sleep")
-            .arg("99999")
-            .spawn()
-            .expect("Failed to spawn placeholder");
-    }
-
-    let bin_name = get_bin_name().unwrap_or_else(|| "app".to_string());
-    let bin_path = format!("target/debug/{}", bin_name);
-
-    println!("  ✓ Build success, starting...");
-    println!();
-
-    Command::new(&bin_path)
-        .env("ARCX_PORT", port.to_string())
-        .spawn()
-        .unwrap_or_else(|_| panic!("Failed to start {}", bin_path))
-}
-
-fn kill_child(child: &mut std::process::Child) {
-    child.kill().ok();
-    child.wait().ok();
-}
-
-fn get_bin_name() -> Option<String> {
-    let content = fs::read_to_string("Cargo.toml").ok()?;
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with("name") {
-            return trimmed
-                .split('=')
-                .nth(1)
-                .map(|v| v.trim().trim_matches('"').to_string());
-        }
-    }
-    None
-}
-
-/// 从 config/config.default.toml 读取端口配置
-fn read_config_port() -> Option<u16> {
-    let config_path = Path::new("config/config.default.toml");
-    let content = fs::read_to_string(config_path).ok()?;
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with("port") {
-            if let Some(val) = trimmed.split('=').nth(1) {
-                return val.trim().parse().ok();
-            }
-        }
-    }
-    None
-}
 
 // ─────────────────────────────────────────
 // arcx info
