@@ -7,6 +7,7 @@ authors = ["name-q <1620206666@qq.com>"]
 license = "MIT"
 repository = "https://github.com/name-q/Arcx"
 keywords = ["cli", "framework", "scaffold", "generator"]
+readme = "README.md"
 
 [[bin]]
 name = "arcx"

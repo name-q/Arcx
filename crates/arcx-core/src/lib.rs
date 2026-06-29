@@ -8,11 +8,15 @@
 //! ```rust,no_run
 //! use arcx_core::prelude::*;
 //!
+//! mod controller;
+//! mod router;
+//!
 //! #[tokio::main]
 //! async fn main() {
-//!     let cfg = Arcx::load_config();
-//!     arcx_core::logger::init(&cfg.logger);
-//!     // ... build app
+//!     Arcx::new()
+//!         .routes(router::routes)
+//!         .run()
+//!         .await;
 //! }
 //! ```
 
@@ -45,6 +49,7 @@ pub mod prelude {
     pub use crate::httpclient::HttpClient;
     pub use crate::lifecycle::{Lifecycle, ShutdownSignal, ShutdownTrigger, shutdown_channel};
     pub use crate::plugin::{Plugin, PluginError, PluginManager};
+    pub use crate::router::{ArcxRouter, ResourceHandlers};
     pub use crate::schedule::{ScheduleJob, JobContext};
     pub use crate::session::Session;
     pub use crate::ws::{WsHandler, WsMessage, WsSession, WsRegistry};
@@ -55,20 +60,128 @@ pub mod prelude {
 
     // Re-export 常用第三方依赖
     pub use axum;
+    pub use axum::extract::Path;
+    pub use axum::Json;
     pub use async_trait::async_trait;
     pub use serde::{Deserialize, Serialize};
-    pub use serde_json::{self, json};
+    pub use serde_json::{self, json, Value};
     pub use validator::Validate;
     pub use tracing;
     pub use tokio;
 }
 
+use std::any::TypeId;
+use std::sync::Arc;
+
 /// Arcx 框架入口
-/// 提供配置加载等静态方法
-pub struct Arcx;
+///
+/// Builder 模式启动框架，内部自动完成：
+/// - 配置加载
+/// - 日志初始化
+/// - 插件加载
+/// - EventBus & ConfigWatcher
+/// - AppState 构建
+/// - 路由组装 & 中间件
+/// - HTTP 服务启动 & graceful shutdown
+///
+/// ## 用法
+///
+/// ```rust,no_run
+/// Arcx::new()
+///     .routes(router::routes)
+///     .run()
+///     .await;
+/// ```
+pub struct Arcx {
+    routes_fn: Option<Box<dyn FnOnce(&mut router::ArcxRouter) + Send>>,
+}
 
 impl Arcx {
-    /// 加载强类型配置
+    /// 创建 Arcx 实例
+    pub fn new() -> Self {
+        Self { routes_fn: None }
+    }
+
+    /// 注册路由（传入 router.rs 中的 routes 函数）
+    pub fn routes(mut self, f: fn(&mut router::ArcxRouter)) -> Self {
+        self.routes_fn = Some(Box::new(f));
+        self
+    }
+
+    /// 启动服务
+    ///
+    /// 内部完成所有初始化流程并监听 HTTP 端口。
+    /// 支持 Ctrl+C graceful shutdown。
+    pub async fn run(self) {
+        // 1. 加载配置
+        let cfg = config::AppConfig::load();
+
+        // 2. 初始化日志
+        logger::init(&cfg.logger);
+        tracing::info!("{} v{} starting...", cfg.app.name, cfg.app.version);
+        tracing::info!("Environment: {}", cfg.app.env);
+
+        // 3. 初始化插件
+        let raw_config = config::load_raw_config();
+        let mut plugin_manager = plugin::PluginManager::new();
+        plugin_manager.auto_register_builtin(&raw_config);
+        if let Err(e) = plugin_manager.init_all(&raw_config).await {
+            tracing::error!("Plugin init failed: {}", e);
+            std::process::exit(1);
+        }
+
+        // 4. EventBus & ConfigWatcher
+        let event_bus = client::event_bus::EventBus::new(128);
+        let (_notifier, config_watcher) = config::watcher::ConfigWatcher::new(cfg.clone());
+
+        // 5. HttpClient
+        let http_client = httpclient::HttpClient::new(cfg.httpclient.clone());
+
+        // 6. 构建 AppState
+        let mut resources = plugin_manager.take_resources();
+        resources.insert(
+            TypeId::of::<httpclient::HttpClient>(),
+            Arc::new(http_client),
+        );
+        let state = context::AppState::with_resources(
+            cfg.clone(),
+            resources,
+            event_bus.clone(),
+            config_watcher,
+        );
+
+        // 7. 构建路由
+        let mut arcx_router = router::ArcxRouter::new();
+        if let Some(routes_fn) = self.routes_fn {
+            tracing::info!("Loading routes...");
+            routes_fn(&mut arcx_router);
+        }
+        let app_router = arcx_router.build(&state);
+
+        // 8. 应用中间件
+        let app = middleware::apply_global_middleware(app_router, &cfg).with_state(state);
+
+        // 9. 启动服务
+        let addr = format!("{}:{}", cfg.server.host, cfg.server.port);
+        tracing::info!("Arcx server running at http://{}", addr);
+
+        let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
+        axum::serve(listener, app)
+            .with_graceful_shutdown(async {
+                tokio::signal::ctrl_c().await.ok();
+                tracing::info!("Shutting down gracefully...");
+            })
+            .await
+            .unwrap();
+
+        // 10. 清理
+        plugin_manager.shutdown_all().await;
+        tracing::info!("Server stopped.");
+    }
+
+    // ─── 兼容旧用法的静态方法 ───────────────────────────
+
+    /// 加载强类型配置（用于需要手动控制启动流程的场景）
     pub fn load_config() -> config::AppConfig {
         config::AppConfig::load()
     }
@@ -76,5 +189,11 @@ impl Arcx {
     /// 加载原始配置（用于插件系统）
     pub fn load_raw_config() -> toml::Value {
         config::load_raw_config()
+    }
+}
+
+impl Default for Arcx {
+    fn default() -> Self {
+        Self::new()
     }
 }

@@ -8,6 +8,7 @@ license = "MIT"
 repository = "https://github.com/name-q/Arcx"
 keywords = ["web", "framework", "axum", "convention", "ai"]
 categories = ["web-programming::http-server"]
+readme = "README.md"
 
 [dependencies]
 # Web

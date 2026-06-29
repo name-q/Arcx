@@ -2,11 +2,11 @@
 //!
 //! 命令：
 //! - arcx new <project>              创建新项目
-//! - arcx generate controller <name> 生成 controller 模板
-//! - arcx generate service <name>    生成 service 模板
-//! - arcx generate model <name>      生成 model 模板
-//! - arcx generate job <name>        生成定时任务模板
-//! - arcx dev                        启动开发服务器（支持热重载）
+//! - arcx generate controller <name> 生成 controller
+//! - arcx generate service <name>    生成 service
+//! - arcx generate model <name>      生成 model
+//! - arcx generate job <name>        生成定时任务
+//! - arcx dev                        启动开发服务器（热重载）
 //! - arcx info                       显示项目信息
 
 use clap::{Parser, Subcommand};
@@ -96,12 +96,7 @@ fn cmd_new(name: &str) {
     println!();
 
     // 创建目录结构
-    let dirs = [
-        "src/controller",
-        "src/service",
-        "src/model",
-        "config",
-    ];
+    let dirs = ["src/controller", "src/service", "src/model", "config"];
     for dir in &dirs {
         fs::create_dir_all(project_path.join(dir)).unwrap();
     }
@@ -121,7 +116,6 @@ serde_json = "1"
 tracing = "0.1"
 validator = {{ version = "0.18", features = ["derive"] }}
 async-trait = "0.1"
-axum = {{ version = "0.7", features = ["ws"] }}
 "#
     );
     fs::write(project_path.join("Cargo.toml"), cargo_toml).unwrap();
@@ -169,7 +163,11 @@ enable = false
 # expire = 86400
 "#
     );
-    fs::write(project_path.join("config/config.default.toml"), default_config).unwrap();
+    fs::write(
+        project_path.join("config/config.default.toml"),
+        default_config,
+    )
+    .unwrap();
 
     // config/config.prod.toml
     let prod_config = r#"[app]
@@ -195,95 +193,70 @@ hsts = true
 
     // src/main.rs
     let main_rs = format!(
-        r#"//! {project_name} — Powered by Arcx Framework
+        r#"//! {project_name} — Powered by Arcx
 
 mod controller;
-mod service;
+mod router;
 
 use arcx_core::prelude::*;
 
 #[tokio::main]
 async fn main() {{
-    // 1. 加载配置
-    let cfg = Arcx::load_config();
-
-    // 2. 初始化日志
-    arcx_core::logger::init(&cfg.logger);
-    tracing::info!("{{}} v{{}} starting...", cfg.app.name, cfg.app.version);
-
-    // 3. 加载插件
-    let raw_config = Arcx::load_raw_config();
-    let mut plugin_manager = PluginManager::new();
-    plugin_manager.auto_register_builtin(&raw_config);
-    if let Err(e) = plugin_manager.init_all(&raw_config).await {{
-        tracing::error!("Plugin init failed: {{}}", e);
-        std::process::exit(1);
-    }}
-
-    // 4. 构建 HttpClient
-    let http_client = HttpClient::new(cfg.httpclient.clone());
-
-    // 5. 构建事件总线 & 配置热更新
-    let event_bus = EventBus::new(128);
-    let (_notifier, config_watcher) = ConfigWatcher::new(cfg.clone());
-
-    // 6. 构建共享状态
-    let mut resources = plugin_manager.take_resources();
-    resources.insert(
-        std::any::TypeId::of::<HttpClient>(),
-        std::sync::Arc::new(http_client),
-    );
-    let state = AppState::with_resources(cfg.clone(), resources, event_bus.clone(), config_watcher);
-
-    // 7. 构建路由
-    let public = arcx_core::register_controllers!(AppState, controller, home);
-    let api = axum::Router::new().nest("/api", public);
-    let app = apply_global_middleware(api, &cfg).with_state(state);
-
-    // 8. 启动服务
-    let addr = format!("{{}}:{{}}", cfg.server.host, cfg.server.port);
-    tracing::info!("Server running at http://{{}}", addr);
-
-    let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
-    axum::serve(listener, app)
-        .with_graceful_shutdown(async {{
-            tokio::signal::ctrl_c().await.ok();
-            tracing::info!("Shutting down...");
-        }})
-        .await
-        .unwrap();
-
-    plugin_manager.shutdown_all().await;
+    Arcx::new()
+        .routes(router::routes)
+        .run()
+        .await;
 }}
 "#
     );
     fs::write(project_path.join("src/main.rs"), main_rs).unwrap();
 
-    // src/controller/mod.rs
-    let controller_mod = r#"pub mod home;
+    // src/router.rs
+    let router_rs = r#"//! 路由声明
+
+use arcx_core::prelude::*;
+use crate::controller;
+
+pub fn routes(r: &mut ArcxRouter) {
+    r.resources("/api/home", controller::home::handlers());
+}
 "#;
-    fs::write(project_path.join("src/controller/mod.rs"), controller_mod).unwrap();
+    fs::write(project_path.join("src/router.rs"), router_rs).unwrap();
+
+    // src/controller/mod.rs
+    fs::write(project_path.join("src/controller/mod.rs"), "pub mod home;\n").unwrap();
 
     // src/controller/home.rs
-    let home_controller = format!(
-        r#"use axum::{{routing::get, Json, Router}};
+    let home_controller = r#"//! Home Controller
+
 use arcx_core::prelude::*;
 
-pub fn routes() -> Router<AppState> {{
-    Router::new()
-        .route("/", get(index))
-}}
-
-async fn index(ctx: Context) -> Json<serde_json::Value> {{
-    Json(json!({{
+/// GET /api/home
+pub async fn index(ctx: Context) -> AppResult<Json<Value>> {
+    Ok(success(json!({
         "name": ctx.config.app.name,
         "version": ctx.config.app.version,
         "message": "Welcome to Arcx!"
-    }}))
-}}
-"#
-    );
-    fs::write(project_path.join("src/controller/home.rs"), home_controller).unwrap();
+    })))
+}
+
+/// GET /api/home/:id
+pub async fn show(_ctx: Context, Path(id): Path<u64>) -> AppResult<Json<Value>> {
+    Ok(success(json!({ "id": id })))
+}
+
+/// 导出 handlers
+pub fn handlers() -> ResourceHandlers {
+    ResourceHandlers::new()
+        .index(index)
+        .show(show)
+}
+"#;
+    fs::write(
+        project_path.join("src/controller/home.rs"),
+        home_controller,
+    )
+    .unwrap();
 
     // src/service/mod.rs
     fs::write(
@@ -314,20 +287,21 @@ cargo run
 # Install CLI
 cargo install arcx-cli
 
-# Generate code
-arcx g c article
-arcx g s article
-
-# Hot reload (requires cargo-watch)
+# Hot reload
 arcx dev
+
+# Generate code
+arcx g c user
+arcx g s user
 ```
 
 ## Project Structure
 
 ```
 src/
-├── main.rs           # Entry point
-├── controller/       # Route handlers (one file per resource)
+├── main.rs           # Entry point (3 lines)
+├── router.rs         # Route declarations (centralized)
+├── controller/       # Handler functions
 ├── service/          # Business logic
 └── model/            # Database entities
 config/
@@ -357,7 +331,7 @@ fn cmd_generate_controller(name: &str) {
     ensure_in_project();
     let path = format!("src/controller/{}.rs", name);
     if Path::new(&path).exists() {
-        eprintln!("✗ Controller \'{}\' already exists at {}", name, path);
+        eprintln!("✗ Controller '{}' already exists at {}", name, path);
         std::process::exit(1);
     }
 
@@ -366,36 +340,41 @@ fn cmd_generate_controller(name: &str) {
         r#"//! {struct_name} Controller
 //! Routes: /api/{name}
 
-use axum::{{
-    extract::Path,
-    routing::{{get, post}},
-    Json, Router,
-}};
 use arcx_core::prelude::*;
 
-/// Public routes
-pub fn routes() -> Router<AppState> {{
-    Router::new()
-        .route("/", get(list))
-        .route("/:id", get(detail))
-}}
-
-/// Protected routes (require auth)
-pub fn protected_routes() -> Router<AppState> {{
-    Router::new()
-        .route("/", post(create))
-}}
-
-async fn list() -> AppResult<Json<serde_json::Value>> {{
+/// GET /api/{name}
+pub async fn index(_ctx: Context) -> AppResult<Json<Value>> {{
     Ok(success(json!({{ "items": [], "total": 0 }})))
 }}
 
-async fn detail(Path(id): Path<u64>) -> AppResult<Json<serde_json::Value>> {{
+/// GET /api/{name}/:id
+pub async fn show(_ctx: Context, Path(id): Path<u64>) -> AppResult<Json<Value>> {{
     Ok(success(json!({{ "id": id }})))
 }}
 
-async fn create(Json(body): Json<serde_json::Value>) -> AppResult<Json<serde_json::Value>> {{
+/// POST /api/{name}
+pub async fn create(_ctx: Context, Json(body): Json<Value>) -> AppResult<Json<Value>> {{
     Ok(success(json!({{ "created": body }})))
+}}
+
+/// PUT /api/{name}/:id
+pub async fn update(_ctx: Context, Path(id): Path<u64>, Json(body): Json<Value>) -> AppResult<Json<Value>> {{
+    Ok(success(json!({{ "id": id, "updated": body }})))
+}}
+
+/// DELETE /api/{name}/:id
+pub async fn destroy(_ctx: Context, Path(id): Path<u64>) -> AppResult<Json<Value>> {{
+    Ok(success(json!({{ "id": id, "deleted": true }})))
+}}
+
+/// 导出 handlers
+pub fn handlers() -> ResourceHandlers {{
+    ResourceHandlers::new()
+        .index(index)
+        .show(show)
+        .create(create)
+        .update(update)
+        .destroy(destroy)
 }}
 "#
     );
@@ -404,13 +383,13 @@ async fn create(Json(body): Json<serde_json::Value>) -> AppResult<Json<serde_jso
     fs::write(&path, &content).unwrap();
     println!("✓ Created: {}", path);
 
-    // Auto-register in src/controller/mod.rs
+    // 注册到 mod.rs
     auto_register_mod("src/controller/mod.rs", name);
 
-    // Auto-register in src/main.rs register_controllers! macro
-    auto_register_controller_in_main(name);
+    // 注册到 router.rs
+    auto_register_in_router(name);
 
-    println!("✓ Auto-registered in mod.rs and main.rs");
+    println!("✓ Auto-registered in mod.rs and router.rs");
     println!("  Route: /api/{}", name);
 }
 
@@ -430,24 +409,25 @@ fn cmd_generate_service(name: &str) {
     let content = format!(
         r#"//! {struct_name} Service
 
-use sea_orm::DatabaseConnection;
-use std::sync::Arc;
+use arcx_core::prelude::*;
 
-pub struct {struct_name}Service {{
-    db: Arc<DatabaseConnection>,
-}}
+pub struct {struct_name}Service;
 
 impl {struct_name}Service {{
-    pub fn new(db: Arc<DatabaseConnection>) -> Self {{
-        Self {{ db }}
+    pub fn new() -> Self {{
+        Self
     }}
 
-    pub async fn find_all(&self) -> Result<Vec<serde_json::Value>, String> {{
+    pub async fn find_all(&self) -> AppResult<Vec<Value>> {{
         Ok(vec![])
     }}
 
-    pub async fn find_by_id(&self, _id: u64) -> Result<Option<serde_json::Value>, String> {{
+    pub async fn find_by_id(&self, _id: u64) -> AppResult<Option<Value>> {{
         Ok(None)
+    }}
+
+    pub async fn create(&self, _data: Value) -> AppResult<Value> {{
+        Ok(json!({{}}))
     }}
 }}
 "#
@@ -456,9 +436,9 @@ impl {struct_name}Service {{
     ensure_parent(&path);
     fs::write(&path, content).unwrap();
     println!("✓ Created: {}", path);
-    println!();
-    println!("  Register in src/service/mod.rs:");
-    println!("    pub mod {};", name);
+
+    auto_register_mod("src/service/mod.rs", name);
+    println!("✓ Auto-registered in service/mod.rs");
 }
 
 // ─────────────────────────────────────────
@@ -500,9 +480,9 @@ impl ActiveModelBehavior for ActiveModel {{}}
     ensure_parent(&path);
     fs::write(&path, content).unwrap();
     println!("✓ Created: {}", path);
-    println!();
-    println!("  Register in src/model/mod.rs:");
-    println!("    pub mod {};", name);
+
+    auto_register_mod("src/model/mod.rs", name);
+    println!("✓ Auto-registered in model/mod.rs");
 }
 
 // ─────────────────────────────────────────
@@ -550,7 +530,6 @@ impl ScheduleJob for {struct_name}Job {{
     println!("    schedule_manager.register({}Job);", struct_name);
 }
 
-
 // ─────────────────────────────────────────
 // arcx info
 // ─────────────────────────────────────────
@@ -564,10 +543,22 @@ fn cmd_info() {
 
     for line in cargo_content.lines() {
         if line.starts_with("name") {
-            project_name = line.split('=').nth(1).unwrap_or("").trim().trim_matches('"').to_string();
+            project_name = line
+                .split('=')
+                .nth(1)
+                .unwrap_or("")
+                .trim()
+                .trim_matches('"')
+                .to_string();
         }
         if line.starts_with("version") && version == "unknown" {
-            version = line.split('=').nth(1).unwrap_or("").trim().trim_matches('"').to_string();
+            version = line
+                .split('=')
+                .nth(1)
+                .unwrap_or("")
+                .trim()
+                .trim_matches('"')
+                .to_string();
         }
     }
 
@@ -598,7 +589,7 @@ fn cmd_info() {
 // Auto-registration helpers
 // ─────────────────────────────────────────
 
-/// 向 mod.rs 中追加 `pub mod <name>;`（如果不存在）
+/// 向 mod.rs 中追加 `pub mod <name>;`
 fn auto_register_mod(mod_path: &str, name: &str) {
     let mod_file = Path::new(mod_path);
     if !mod_file.exists() {
@@ -609,76 +600,42 @@ fn auto_register_mod(mod_path: &str, name: &str) {
     let content = fs::read_to_string(mod_file).unwrap();
     let mod_line = format!("pub mod {};", name);
 
-    // 已注册则跳过
     if content.lines().any(|l| l.trim() == mod_line) {
         return;
     }
 
-    // 追加到末尾
     let mut new_content = content.trim_end().to_string();
     new_content.push_str(&format!("\npub mod {};\n", name));
     fs::write(mod_file, new_content).unwrap();
 }
 
-/// 在 main.rs 的 register_controllers! 宏调用中追加新 controller
-fn auto_register_controller_in_main(name: &str) {
-    let main_path = Path::new("src/main.rs");
-    if !main_path.exists() {
-        eprintln!("  ⚠ src/main.rs not found, skip auto-register in main");
+/// 在 router.rs 中追加资源路由声明
+fn auto_register_in_router(name: &str) {
+    let router_path = Path::new("src/router.rs");
+    if !router_path.exists() {
+        eprintln!("  ⚠ src/router.rs not found, skip auto-register");
         return;
     }
 
-    let content = fs::read_to_string(main_path).unwrap();
+    let content = fs::read_to_string(router_path).unwrap();
 
-    // 匹配 register_controllers!(AppState, controller, ...) 模式
-    // 支持多行和尾部逗号
-    if let Some(start) = content.find("register_controllers!") {
-        // 找到对应的闭合括号
-        let from_macro = &content[start..];
-        let mut depth = 0;
-        let mut end_offset = 0;
-        for (i, ch) in from_macro.char_indices() {
-            match ch {
-                '(' => depth += 1,
-                ')' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        end_offset = i;
-                        break;
-                    }
-                }
-                _ => {}
-            }
-        }
+    // 检查是否已注册
+    let route_line = format!("controller::{}::handlers()", name);
+    if content.contains(&route_line) {
+        return;
+    }
 
-        if end_offset == 0 {
-            eprintln!("  ⚠ Could not parse register_controllers! macro");
-            return;
-        }
-
-        let macro_content = &from_macro[..end_offset + 1];
-
-        // 检查是否已经包含这个 controller
-        if macro_content.contains(&format!(", {}", name))
-            || macro_content.contains(&format!(",{}", name))
-        {
-            return; // 已注册
-        }
-
-        // 在闭合括号前插入 ", name"
-        let inner = &from_macro[..end_offset];
-        let new_macro = format!("{}, {})", inner.trim_end(), name);
-
-        let new_content = format!(
-            "{}{}{}",
-            &content[..start],
-            new_macro,
-            &content[start + end_offset + 1..]
+    // 找到 routes 函数的最后一个 } 之前插入
+    // 策略：找最后一个 `}` 前面插入新行
+    if let Some(last_brace) = content.rfind('}') {
+        let new_line = format!(
+            "    r.resources(\"/api/{}\", controller::{}::handlers());\n",
+            name, name
         );
-
-        fs::write(main_path, new_content).unwrap();
+        let new_content = format!("{}{}{}", &content[..last_brace], new_line, &content[last_brace..]);
+        fs::write(router_path, new_content).unwrap();
     } else {
-        eprintln!("  ⚠ register_controllers! not found in main.rs, skip auto-register");
+        eprintln!("  ⚠ Could not parse router.rs, skip auto-register");
     }
 }
 
@@ -713,10 +670,13 @@ fn to_pascal_case(s: &str) -> String {
 
 fn count_rs_files(dir: &str) -> usize {
     let path = Path::new(dir);
-    if !path.exists() { return 0; }
+    if !path.exists() {
+        return 0;
+    }
     fs::read_dir(path)
         .map(|entries| {
-            entries.flatten()
+            entries
+                .flatten()
                 .filter(|e| {
                     let name = e.file_name().to_string_lossy().to_string();
                     name.ends_with(".rs") && name != "mod.rs"
