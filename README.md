@@ -1,5 +1,7 @@
 # Arcx
 
+[![GitHub](https://img.shields.io/badge/GitHub-name--q%2FArcx-blue?logo=github)](https://github.com/name-q/Arcx)
+
 A convention-over-configuration web framework for Rust, built on [Axum](https://github.com/tokio-rs/axum).
 
 Arc(Architecture) + X(Extensible) — 约定优于配置，开箱即用。
@@ -126,3 +128,8 @@ examples/
 ## License
 
 MIT
+
+## Links
+
+- **Repository**: [https://github.com/name-q/Arcx](https://github.com/name-q/Arcx)
+- **Issues**: [https://github.com/name-q/Arcx/issues](https://github.com/name-q/Arcx/issues)
