@@ -1,5 +1,7 @@
 # Arcx
 
+[![Crates.io](https://img.shields.io/crates/v/arcx-core?label=arcx-core)](https://crates.io/crates/arcx-core)
+[![Crates.io](https://img.shields.io/crates/v/arcx-cli?label=arcx-cli)](https://crates.io/crates/arcx-cli)
 [![GitHub](https://img.shields.io/badge/GitHub-name--q%2FArcx-blue?logo=github)](https://github.com/name-q/Arcx)
 
 A convention-over-configuration web framework for Rust, built on [Axum](https://github.com/tokio-rs/axum).
@@ -8,10 +10,13 @@ Arc(Architecture) + X(Extensible) — 约定优于配置，开箱即用。
 
 ## Features
 
-- **Convention over Configuration** — file-based routing, auto controller loading
-- **Plugin System** — database, JWT, custom plugins with lifecycle management
-- **Type-safe Config** — multi-environment TOML config with hot reload
-- **Built-in Security** — CSRF, XSS protection, security headers, signed sessions
+- **Free-style routing** — `r.get/post/put/delete`, no forced conventions
+- **Pure function handlers** — no traits, no macros, any parameter signature
+- **Flexible responses** — return any `impl IntoResponse`, no forced format
+- **Auth provider** — implement one trait, use any strategy (JWT/Session/OAuth)
+- **Plugin system** — database, custom plugins with lifecycle management
+- **Type-safe config** — multi-environment TOML config with hot reload
+- **Built-in security** — CSRF, XSS protection, security headers, signed sessions
 - **WebSocket** — trait-based WS handler with session management
 - **Schedule** — cron-based job scheduling
 - **HTTP Client** — reqwest wrapper with retry & exponential backoff
@@ -41,67 +46,72 @@ arcx dev
 my-app/
 ├── src/
 │   ├── main.rs              # Entry point
-│   ├── controller/          # Route handlers (file = route prefix)
-│   │   ├── mod.rs
-│   │   └── home.rs          # → /api/home
+│   ├── router.rs            # Route declarations (free style)
+│   ├── helper.rs            # Response format (your code, customizable)
+│   ├── controller/          # Handler functions
+│   ├── middleware/
+│   │   └── auth.rs          # Auth implementation (your code)
 │   ├── service/             # Business logic
 │   └── model/               # Database entities
 ├── config/
-│   ├── config.default.toml  # Base config
-│   └── config.prod.toml     # Production overrides
+│   ├── config.default.toml
+│   └── config.prod.toml
 └── Cargo.toml
 ```
 
-## Example Controller
+## Example
 
 ```rust
-use axum::{routing::get, Json, Router};
+// main.rs
 use arcx_core::prelude::*;
+use crate::middleware::auth::JwtAuth;
 
-pub fn routes() -> Router<AppState> {
-    Router::new()
-        .route("/", get(index))
-        .route("/:id", get(detail))
-}
-
-async fn index(ctx: Context) -> AppResult<Json<serde_json::Value>> {
-    Ok(success(json!({ "message": "hello" })))
-}
-
-async fn detail(
-    ctx: Context,
-    axum::extract::Path(id): axum::extract::Path<u64>,
-) -> AppResult<Json<serde_json::Value>> {
-    Ok(success(json!({ "id": id })))
+#[tokio::main]
+async fn main() {
+    Arcx::new()
+        .auth(JwtAuth::new("secret"))  // optional
+        .routes(router::routes)
+        .run()
+        .await;
 }
 ```
 
-## Configuration
+```rust
+// router.rs
+pub fn routes(r: &mut ArcxRouter) {
+    r.get("/api/home", controller::home::index);
+    r.post("/api/home", controller::home::create);
 
-```toml
-[app]
-name = "my-app"
-version = "0.1.0"
-env = "dev"
-
-[server]
-host = "127.0.0.1"
-port = 3000
-
-[middleware]
-cors = true
-logger = true
-security = true
-
-[plugin.database]
-enable = true
-url = "sqlite:./data.db?mode=rwc"
-
-[plugin.jwt]
-enable = true
-secret = "your-secret-key"
-expire = 86400
+    // Protected routes (requires .auth() in main.rs)
+    r.guarded_scope("/api/admin", |s| {
+        s.get("/profile", controller::admin::profile);
+    });
+}
 ```
+
+```rust
+// controller/home.rs
+pub async fn index(ctx: Context) -> AppResult<impl IntoResponse> {
+    Ok(helper::success(json!({ "message": "Hello!" })))
+}
+```
+
+```rust
+// middleware/auth.rs — implement AuthProvider trait
+#[async_trait]
+impl AuthProvider for JwtAuth {
+    async fn authenticate(&self, parts: &RequestParts) -> Result<AuthUser, AppError> {
+        let token = parts.headers.get("Authorization") /* ... */;
+        Ok(AuthUser { id: "user_1".into(), payload: json!({}) })
+    }
+}
+```
+
+## Middleware Philosophy
+
+Every middleware has exactly two outcomes:
+- **Pass** → `next()`, optionally inject data for the handler
+- **Block** → return response directly (the handler never runs)
 
 ## CLI Commands
 
@@ -119,7 +129,7 @@ expire = 86400
 
 ```
 crates/
-├── arcx-core/     # Framework library (the engine)
+├── arcx-core/     # Framework library
 └── arcx-cli/      # CLI scaffolding tool
 examples/
 └── demo/          # Working example application
@@ -128,8 +138,3 @@ examples/
 ## License
 
 MIT
-
-## Links
-
-- **Repository**: [https://github.com/name-q/Arcx](https://github.com/name-q/Arcx)
-- **Issues**: [https://github.com/name-q/Arcx/issues](https://github.com/name-q/Arcx/issues)

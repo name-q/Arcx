@@ -8,6 +8,7 @@ The core library of **Arcx** — a convention-over-configuration web framework f
 - **Zero-boilerplate controllers** — pure async functions, no traits needed
 - **Flexible responses** — return any `impl IntoResponse`, no forced format
 - **Plugin system** — Database, JWT, custom plugins with resource injection
+- **Auth provider** — implement `AuthProvider` trait, use any auth strategy
 - **Auto middleware** — CORS, logging, security headers, configurable
 - **Multi-env config** — TOML config with environment-based overrides
 - **Error handling** — `AppError` with proper HTTP status codes (400/401/404/422/500)
@@ -22,11 +23,15 @@ use arcx_core::prelude::*;
 
 mod controller;
 mod helper;
+mod middleware;
 mod router;
+
+use crate::middleware::auth::JwtAuth;
 
 #[tokio::main]
 async fn main() {
     Arcx::new()
+        .auth(JwtAuth::new("your-secret"))  // optional: enable guarded_scope
         .routes(router::routes)
         .run()
         .await;
@@ -40,35 +45,78 @@ use arcx_core::prelude::*;
 use crate::controller;
 
 pub fn routes(r: &mut ArcxRouter) {
+    // Public routes
     r.get("/api/home", controller::home::index);
     r.get("/api/home/:id", controller::home::show);
     r.post("/api/home", controller::home::create);
-    r.put("/api/home/:id", controller::home::update);
-    r.delete("/api/home/:id", controller::home::destroy);
 
-    // Authenticated routes
+    // Authenticated routes (requires .auth() in main.rs)
     r.guarded_scope("/api/admin", |s| {
+        s.get("/profile", controller::admin::profile);
         s.get("/dashboard", controller::admin::dashboard);
     });
 }
 ```
 
-### controller — Pure functions, any params
+### Auth — Implement your own strategy
+
+```rust
+use arcx_core::prelude::*;
+
+pub struct JwtAuth { secret: String }
+
+#[async_trait]
+impl AuthProvider for JwtAuth {
+    async fn authenticate(&self, parts: &RequestParts) -> Result<AuthUser, AppError> {
+        // 1. Extract token from header/cookie/query — your choice
+        let token = parts.headers
+            .get("Authorization")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.strip_prefix("Bearer "))
+            .ok_or(AppError::unauthorized("Missing token"))?;
+
+        // 2. Verify token — JWT, session, OAuth, whatever you want
+        let claims = verify_jwt(token, &self.secret)?;
+
+        // 3. Return AuthUser — handler can extract it
+        Ok(AuthUser {
+            id: claims.sub,
+            payload: json!({ "role": claims.role }),
+        })
+    }
+}
+```
+
+### Middleware behavior
+
+Every middleware (including auth guard) has exactly two outcomes:
+
+- **Pass** — call `next`, optionally inject data for the handler
+- **Block** — return a response directly (error or otherwise)
+
+```
+Request → guarded_scope middleware
+          ↓
+    AuthProvider::authenticate(request_parts)
+          ↓
+    ┌─ Ok(AuthUser) → inject into request → handler executes
+    └─ Err(AppError) → return error response, handler never runs
+```
+
+### controller — Pure functions
 
 ```rust
 use arcx_core::prelude::*;
 use crate::helper;
 
+// Public handler
 pub async fn index(ctx: Context) -> AppResult<impl IntoResponse> {
     Ok(helper::success(json!({ "message": "Hello!" })))
 }
 
-pub async fn show(_ctx: Context, Path(id): Path<u64>) -> AppResult<impl IntoResponse> {
-    Ok(helper::success(json!({ "id": id })))
-}
-
-pub async fn create(_ctx: Context, Json(body): Json<Value>) -> AppResult<impl IntoResponse> {
-    Ok(helper::created(json!({ "item": body })))
+// Protected handler — AuthUser extracted automatically
+pub async fn profile(_ctx: Context, user: AuthUser) -> AppResult<impl IntoResponse> {
+    Ok(helper::success(json!({ "id": user.id, "role": user.payload["role"] })))
 }
 ```
 
@@ -80,7 +128,7 @@ pub fn success<T: Serialize>(data: T) -> impl IntoResponse {
 }
 
 pub fn created<T: Serialize>(data: T) -> impl IntoResponse {
-    (StatusCode::CREATED, Json(json!({ "code": 0, "data": data, "message": "created" })))
+    (StatusCode::CREATED, Json(json!({ "code": 0, "data": data })))
 }
 
 pub fn no_content() -> impl IntoResponse {
@@ -93,9 +141,7 @@ The `helper.rs` is **your code** — modify it freely. The framework doesn't dep
 ### Error handling
 
 ```rust
-// Throw errors anywhere in controller/service
 return Err(AppError::not_found("User not found"));
-return Err(AppError::bad_request("Invalid parameter"));
 return Err(AppError::unauthorized("Login required"));
 return Err(AppError::validation(vec![
     FieldError { field: "title".into(), message: "required".into(), code: "missing_field".into() }

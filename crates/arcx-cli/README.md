@@ -28,6 +28,8 @@ myapp/
 │   ├── helper.rs         # Response helpers (customizable)
 │   ├── controller/
 │   │   └── home.rs       # Example controller
+│   ├── middleware/
+│   │   └── auth.rs       # Auth implementation (customizable)
 │   └── service/
 ├── config/
 │   ├── config.default.toml
@@ -66,40 +68,30 @@ arcx dev -p 8080  # custom port
 arcx info
 ```
 
-## Generated Controller Style
+## Auth System
 
-Controllers are pure async functions with free parameter signatures:
-
-```rust
-use arcx_core::prelude::*;
-use crate::helper;
-
-pub async fn index(_ctx: Context) -> AppResult<impl IntoResponse> {
-    Ok(helper::success(json!({ "items": [], "total": 0 })))
-}
-
-pub async fn show(_ctx: Context, Path(id): Path<u64>) -> AppResult<impl IntoResponse> {
-    Ok(helper::success(json!({ "id": id })))
-}
-
-pub async fn create(_ctx: Context, Json(body): Json<Value>) -> AppResult<impl IntoResponse> {
-    Ok(helper::created(json!({ "item": body })))
-}
-```
-
-## Generated Router Style
-
-Routes are declared freely — no forced RESTful conventions:
+Projects include a `middleware/auth.rs` implementing `AuthProvider` trait.
+Enable it in `main.rs`:
 
 ```rust
-pub fn routes(r: &mut ArcxRouter) {
-    r.get("/api/user", controller::user::index);
-    r.get("/api/user/:id", controller::user::show);
-    r.post("/api/user", controller::user::create);
-    r.post("/api/user/login", controller::user::login);
-    r.put("/api/user/:id/avatar", controller::user::upload_avatar);
-}
+use crate::middleware::auth::JwtAuth;
+
+Arcx::new()
+    .auth(JwtAuth::new("your-secret"))
+    .routes(router::routes)
+    .run()
+    .await;
 ```
+
+Then use `guarded_scope` in your router:
+
+```rust
+r.guarded_scope("/api/admin", |s| {
+    s.get("/profile", controller::admin::profile);
+});
+```
+
+The `AuthProvider` trait lets you implement any auth strategy (JWT, Session, OAuth, etc).
 
 ## Links
 

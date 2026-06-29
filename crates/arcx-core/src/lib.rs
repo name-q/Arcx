@@ -45,7 +45,8 @@ pub mod prelude {
     pub use crate::context::{AppState, Context};
     pub use crate::error::{AppError, AppResult, FieldError};
     pub use crate::extract::ValidJson;
-    pub use crate::guard::{auth_guard, CurrentUser};
+    pub use crate::guard::{auth_guard, AuthProvider, AuthUser};
+    pub use crate::guard::auth::RequestParts;
     pub use crate::httpclient::HttpClient;
     pub use crate::lifecycle::{Lifecycle, ShutdownSignal, ShutdownTrigger, shutdown_channel};
     pub use crate::plugin::{Plugin, PluginError, PluginManager};
@@ -79,6 +80,8 @@ pub mod prelude {
 use std::any::TypeId;
 use std::sync::Arc;
 
+use guard::AuthProvider;
+
 /// Arcx 框架入口
 ///
 /// Builder 模式启动框架，内部自动完成：
@@ -94,18 +97,41 @@ use std::sync::Arc;
 ///
 /// ```rust,no_run
 /// Arcx::new()
+///     .auth(my_auth_provider)
 ///     .routes(router::routes)
 ///     .run()
 ///     .await;
 /// ```
 pub struct Arcx {
     routes_fn: Option<Box<dyn FnOnce(&mut router::ArcxRouter) + Send>>,
+    auth_provider: Option<Box<dyn AuthProvider>>,
 }
 
 impl Arcx {
     /// 创建 Arcx 实例
     pub fn new() -> Self {
-        Self { routes_fn: None }
+        Self {
+            routes_fn: None,
+            auth_provider: None,
+        }
+    }
+
+    /// 注册鉴权提供者
+    ///
+    /// 开启后 `guarded_scope` 内的路由自动调用 provider 验证。
+    /// 不注册则不能使用 `guarded_scope`（运行时会报错）。
+    ///
+    /// ## 示例
+    ///
+    /// ```rust
+    /// Arcx::new()
+    ///     .auth(JwtAuth::new("secret"))
+    ///     .routes(router::routes)
+    ///     .run().await;
+    /// ```
+    pub fn auth(mut self, provider: impl AuthProvider) -> Self {
+        self.auth_provider = Some(Box::new(provider));
+        self
     }
 
     /// 注册路由（传入 router.rs 中的 routes 函数）
@@ -149,14 +175,20 @@ impl Arcx {
             TypeId::of::<httpclient::HttpClient>(),
             Arc::new(http_client),
         );
-        let state = context::AppState::with_resources(
+        let mut state = context::AppState::with_resources(
             cfg.clone(),
             resources,
             event_bus.clone(),
             config_watcher,
         );
 
-        // 7. 构建路由
+        // 7. 注册 AuthProvider（如果有）
+        if let Some(provider) = self.auth_provider {
+            state.set_auth_provider_boxed(provider);
+            tracing::info!("Auth provider registered");
+        }
+
+        // 8. 构建路由
         let mut arcx_router = router::ArcxRouter::new();
         if let Some(routes_fn) = self.routes_fn {
             tracing::info!("Loading routes...");
@@ -164,10 +196,10 @@ impl Arcx {
         }
         let app_router = arcx_router.build(&state);
 
-        // 8. 应用中间件
+        // 9. 应用中间件
         let app = middleware::apply_global_middleware(app_router, &cfg).with_state(state);
 
-        // 9. 启动服务
+        // 10. 启动服务
         let addr = format!("{}:{}", cfg.server.host, cfg.server.port);
         tracing::info!("Arcx server running at http://{}", addr);
 
@@ -180,7 +212,7 @@ impl Arcx {
             .await
             .unwrap();
 
-        // 10. 清理
+        // 11. 清理
         plugin_manager.shutdown_all().await;
         tracing::info!("Server stopped.");
     }

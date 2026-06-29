@@ -96,7 +96,7 @@ fn cmd_new(name: &str) {
     println!();
 
     // 创建目录结构
-    let dirs = ["src/controller", "src/service", "src/model", "config"];
+    let dirs = ["src/controller", "src/service", "src/model", "src/middleware", "config"];
     for dir in &dirs {
         fs::create_dir_all(project_path.join(dir)).unwrap();
     }
@@ -197,13 +197,17 @@ hsts = true
 
 mod controller;
 mod helper;
+mod middleware;
 mod router;
 
 use arcx_core::prelude::*;
+// use crate::middleware::auth::JwtAuth;
 
 #[tokio::main]
 async fn main() {{
     Arcx::new()
+        // 开启鉴权后取消注释，guarded_scope 路由会自动调用 authenticate
+        // .auth(JwtAuth::new("your-secret-key"))
         .routes(router::routes)
         .run()
         .await;
@@ -290,11 +294,17 @@ use arcx_core::prelude::*;
 use crate::controller;
 
 pub fn routes(r: &mut ArcxRouter) {
+    // 公开路由
     r.get("/api/home", controller::home::index);
     r.get("/api/home/:id", controller::home::show);
     r.post("/api/home", controller::home::create);
     r.put("/api/home/:id", controller::home::update);
     r.delete("/api/home/:id", controller::home::destroy);
+
+    // 鉴权路由 — 需要先在 main.rs 中注册 .auth(provider)
+    // r.guarded_scope("/api/admin", |s| {
+    //     s.get("/profile", controller::admin::profile);
+    // });
 }
 "#;
     fs::write(project_path.join("src/router.rs"), router_rs).unwrap();
@@ -351,6 +361,64 @@ pub async fn destroy(_ctx: Context, Path(_id): Path<u64>) -> AppResult<impl Into
         "// Service 层：封装业务逻辑\n",
     )
     .unwrap();
+
+    // src/middleware/mod.rs
+    fs::write(
+        project_path.join("src/middleware/mod.rs"),
+        "pub mod auth;\n",
+    )
+    .unwrap();
+
+    // src/middleware/auth.rs — 鉴权实现示例（用户代码，按需修改）
+    let auth_middleware = r#"//! 鉴权实现 — 按需修改
+//!
+//! 实现 AuthProvider trait，控制 token 从哪取、怎么验证。
+//! 框架不绑定任何具体方案，你可以用 JWT、Session、OAuth 等。
+
+#![allow(dead_code)]
+
+use arcx_core::prelude::*;
+
+/// 你的鉴权提供者
+pub struct JwtAuth {
+    secret: String,
+}
+
+impl JwtAuth {
+    pub fn new(secret: impl Into<String>) -> Self {
+        Self { secret: secret.into() }
+    }
+}
+
+#[async_trait]
+impl AuthProvider for JwtAuth {
+    async fn authenticate(&self, parts: &RequestParts) -> Result<AuthUser, AppError> {
+        // 1. 从 Header 取 token（可改为 cookie、query 等）
+        let token = parts.headers
+            .get("Authorization")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.strip_prefix("Bearer "))
+            .ok_or(AppError::unauthorized("Missing Authorization header"))?;
+
+        // 2. 验证 token（替换为你的验证逻辑）
+        // 示例：使用 JWT 插件
+        // let jwt = state.resource::<JwtService>().unwrap();
+        // let claims = jwt.verify(token).map_err(|_| AppError::unauthorized("Invalid token"))?;
+
+        // 临时示例：接受任何非空 token
+        if token.is_empty() {
+            return Err(AppError::unauthorized("Empty token"));
+        }
+
+        Ok(AuthUser {
+            id: "user_from_token".to_string(),
+            payload: serde_json::json!({ "role": "user" }),
+        })
+    }
+}
+"#;
+    fs::write(project_path.join("src/middleware/auth.rs"), auth_middleware).unwrap();
+
 
     // .gitignore
     let gitignore = "target/\n*.db\n.env\n.DS_Store\nlogs/\n";

@@ -9,6 +9,7 @@ use std::sync::Arc;
 use crate::client::event_bus::EventBus;
 use crate::config::watcher::ConfigWatcher;
 use crate::config::AppConfig;
+use crate::guard::AuthProvider;
 
 /// 应用共享状态
 /// 贯穿整个应用生命周期，多线程共享
@@ -21,6 +22,8 @@ pub struct AppState {
     event_bus: EventBus,
     /// 配置热更新观察者（watch channel 驱动）
     config_watcher: ConfigWatcher,
+    /// 用户注册的鉴权提供者（可选）
+    auth_provider: Option<Arc<dyn AuthProvider>>,
 }
 
 impl AppState {
@@ -32,6 +35,7 @@ impl AppState {
             resources: Arc::new(HashMap::new()),
             event_bus,
             config_watcher,
+            auth_provider: None,
         }
     }
 
@@ -47,7 +51,23 @@ impl AppState {
             resources: Arc::new(resources),
             event_bus,
             config_watcher,
+            auth_provider: None,
         }
+    }
+
+    /// 设置鉴权提供者
+    pub fn set_auth_provider(&mut self, provider: impl AuthProvider) {
+        self.auth_provider = Some(Arc::new(provider));
+    }
+
+    /// 设置鉴权提供者（Box 版本，框架内部使用）
+    pub fn set_auth_provider_boxed(&mut self, provider: Box<dyn AuthProvider>) {
+        self.auth_provider = Some(Arc::from(provider));
+    }
+
+    /// 获取鉴权提供者（guard 中间件内部调用）
+    pub fn auth_provider(&self) -> Option<Arc<dyn AuthProvider>> {
+        self.auth_provider.clone()
     }
 
     /// 获取插件资源
@@ -76,9 +96,7 @@ impl AppState {
 /// ```rust
 /// pub async fn index(ctx: Context) -> impl IntoResponse {
 ///     let db = ctx.resource::<DbPool>().unwrap();
-///     // 发送事件
 ///     ctx.emit(AppEvent::Custom { kind: "user.created".into(), payload: "{}".into() });
-///     // 订阅配置变更
 ///     let config_rx = ctx.watch_config();
 /// }
 /// ```

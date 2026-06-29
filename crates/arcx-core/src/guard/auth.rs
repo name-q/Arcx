@@ -1,37 +1,86 @@
-//! 鉴权守卫
-//! 
-//! 从请求头提取 Authorization: Bearer <token>，验证 JWT。
-//! 验证通过后将用户信息注入到请求扩展中，后续 handler 可通过 CurrentUser 提取。
+//! 鉴权守卫 — 基于 AuthProvider trait 的通用实现
+//!
+//! 框架只定义接口，用户实现具体验证逻辑。
+//! 中间件行为：
+//! - 放行：调用 provider.authenticate() 成功 → 注入 AuthUser → next
+//! - 阻断：authenticate 返回 Err → 直接返回错误响应
 
 use axum::{
     extract::{Request, State},
-    http::{self, StatusCode},
+    http,
     middleware::Next,
     response::{IntoResponse, Response},
-    Json,
 };
-use serde_json::json;
 
 use crate::context::AppState;
-use crate::plugin::builtin::jwt::{Claims, JwtService};
+use crate::error::AppError;
 
-/// 当前登录用户 —— 从已验证的 token 中提取
-/// 
-/// 用法：
-/// ```rust
-/// async fn profile(user: CurrentUser) -> impl IntoResponse {
-///     format!("Hello, {}", user.sub)
-/// }
-/// ```
+/// 鉴权用户 — authenticate 成功后注入请求
+///
+/// handler 参数中写 `user: AuthUser` 即可提取。
+/// 写 `user: Option<AuthUser>` 则不报错，未登录时为 None。
 #[derive(Debug, Clone)]
-pub struct CurrentUser {
-    pub sub: String,
-    pub claims: Claims,
+pub struct AuthUser {
+    /// 用户唯一标识
+    pub id: String,
+    /// 用户附加数据（角色、权限等，由 AuthProvider 决定内容）
+    pub payload: serde_json::Value,
 }
 
-/// 实现 FromRequestParts，让 handler 可以直接提取 CurrentUser
+/// 鉴权提供者 trait — 用户必须实现
+///
+/// 框架不关心你用 JWT/Session/OAuth/远程验证：
+/// - token 从哪取（header/cookie/query）由你决定
+/// - 怎么验证由你决定
+/// - 返回 AuthUser 即表示通过
+///
+/// ## 示例
+///
+/// ```rust
+/// pub struct JwtAuth {
+///     secret: String,
+/// }
+///
+/// #[async_trait]
+/// impl AuthProvider for JwtAuth {
+///     async fn authenticate(&self, parts: &RequestParts) -> Result<AuthUser, AppError> {
+///         let token = parts.headers
+///             .get("Authorization")
+///             .and_then(|v| v.to_str().ok())
+///             .and_then(|v| v.strip_prefix("Bearer "))
+///             .ok_or(AppError::unauthorized("Missing token"))?;
+///
+///         let claims = verify_jwt(token, &self.secret)
+///             .map_err(|_| AppError::unauthorized("Invalid token"))?;
+///
+///         Ok(AuthUser {
+///             id: claims.sub,
+///             payload: json!({ "role": claims.role }),
+///         })
+///     }
+/// }
+/// ```
+#[async_trait::async_trait]
+pub trait AuthProvider: Send + Sync + 'static {
+    /// 从请求中提取并验证身份
+    ///
+    /// - 成功：返回 AuthUser
+    /// - 失败：返回 AppError（通常是 unauthorized/forbidden）
+    async fn authenticate(&self, parts: &RequestParts) -> Result<AuthUser, AppError>;
+}
+
+/// 请求元数据（传给 AuthProvider 用于提取 token）
+///
+/// 包含 headers、URI、method 等，不含 body。
+pub struct RequestParts {
+    pub headers: http::HeaderMap,
+    pub uri: http::Uri,
+    pub method: http::Method,
+}
+
+/// 实现 FromRequestParts，让 AuthUser 能作为 handler 参数直接提取
 #[axum::async_trait]
-impl<S> axum::extract::FromRequestParts<S> for CurrentUser
+impl<S> axum::extract::FromRequestParts<S> for AuthUser
 where
     S: Send + Sync,
 {
@@ -43,90 +92,53 @@ where
     ) -> Result<Self, Self::Rejection> {
         parts
             .extensions
-            .get::<CurrentUser>()
+            .get::<AuthUser>()
             .cloned()
             .ok_or_else(|| {
-                (
-                    StatusCode::UNAUTHORIZED,
-                    Json(json!({
-                        "success": false,
-                        "error": { "code": 401, "message": "未登录" }
-                    })),
-                )
-                    .into_response()
+                AppError::unauthorized("Not authenticated").into_response()
             })
     }
 }
 
-/// 鉴权守卫中间件
-/// 
-/// 使用方式：
-/// ```rust
-/// .route_layer(axum::middleware::from_fn_with_state(state.clone(), auth_guard))
-/// ```
+/// 鉴权守卫中间件（框架内部使用）
+///
+/// guarded_scope 自动挂载此中间件。
+/// 行为：
+/// 1. 从 AppState 获取用户注册的 AuthProvider
+/// 2. 调用 provider.authenticate(parts)
+/// 3. 成功 → AuthUser 注入请求扩展 → 放行
+/// 4. 失败 → 阻断，返回错误响应
 pub async fn auth_guard(
     State(state): State<AppState>,
     mut req: Request,
     next: Next,
 ) -> Response {
-    // 从 header 提取 token
-    let token = req
-        .headers()
-        .get(http::header::AUTHORIZATION)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer "));
-
-    let token = match token {
-        Some(t) => t,
+    // 获取用户注册的 AuthProvider
+    let provider = match state.auth_provider() {
+        Some(p) => p,
         None => {
-            return (
-                StatusCode::UNAUTHORIZED,
-                Json(json!({
-                    "success": false,
-                    "error": { "code": 401, "message": "缺少 Authorization header" }
-                })),
-            )
-                .into_response();
+            tracing::error!("guarded_scope used but no AuthProvider registered. Call Arcx::new().auth(provider) first.");
+            return AppError::internal("Auth not configured").into_response();
         }
     };
 
-    // 获取 JWT 服务并验证
-    let jwt_service = match state.resource::<JwtService>() {
-        Some(s) => s,
-        None => {
-            tracing::error!("AuthGuard: JWT plugin not configured");
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({
-                    "success": false,
-                    "error": { "code": 500, "message": "服务器配置错误" }
-                })),
-            )
-                .into_response();
-        }
+    // 构造 RequestParts
+    let parts = RequestParts {
+        headers: req.headers().clone(),
+        uri: req.uri().clone(),
+        method: req.method().clone(),
     };
 
-    // 验证 token
-    match jwt_service.verify(token) {
-        Ok(claims) => {
-            let current_user = CurrentUser {
-                sub: claims.sub.clone(),
-                claims,
-            };
-            // 注入到请求扩展，后续 handler 可提取
-            req.extensions_mut().insert(current_user);
+    // 调用用户实现的验证逻辑
+    match provider.authenticate(&parts).await {
+        Ok(user) => {
+            // 放行：注入 AuthUser，继续执行 controller
+            req.extensions_mut().insert(user);
             next.run(req).await
         }
         Err(e) => {
-            tracing::debug!("AuthGuard: token invalid - {}", e);
-            (
-                StatusCode::UNAUTHORIZED,
-                Json(json!({
-                    "success": false,
-                    "error": { "code": 401, "message": "Token 无效或已过期" }
-                })),
-            )
-                .into_response()
+            // 阻断：直接返回错误响应
+            e.into_response()
         }
     }
 }
