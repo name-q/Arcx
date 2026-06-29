@@ -548,7 +548,14 @@ impl ScheduleJob for {struct_name}Job {{
 // arcx dev
 // ─────────────────────────────────────────
 
-fn cmd_dev(port: u16) {
+fn cmd_dev(cli_port: u16) {
+    // 读取配置文件中的端口，CLI 参数优先
+    let port = if cli_port != 3000 {
+        cli_port
+    } else {
+        read_config_port().unwrap_or(3000)
+    };
+
     println!("⚡ Starting Arcx dev server on port {}...", port);
     println!();
 
@@ -583,6 +590,21 @@ fn cmd_dev(port: u16) {
 
         std::process::exit(status.code().unwrap_or(1));
     }
+}
+
+/// 从 config/config.default.toml 读取端口配置
+fn read_config_port() -> Option<u16> {
+    let config_path = Path::new("config/config.default.toml");
+    let content = fs::read_to_string(config_path).ok()?;
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("port") {
+            if let Some(val) = trimmed.split('=').nth(1) {
+                return val.trim().parse().ok();
+            }
+        }
+    }
+    None
 }
 
 // ─────────────────────────────────────────
