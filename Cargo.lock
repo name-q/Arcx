@@ -95,7 +95,7 @@ dependencies = [
 
 [[package]]
 name = "arcx-cli"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "clap",
  "ctrlc",
@@ -106,7 +106,7 @@ dependencies = [
 
 [[package]]
 name = "arcx-core"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "async-trait",
  "axum",
