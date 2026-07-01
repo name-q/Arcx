@@ -226,11 +226,7 @@ async fn main() {{
 
 #![allow(dead_code)]
 
-use axum::http::StatusCode;
-use axum::response::IntoResponse;
-use axum::Json;
-use serde::Serialize;
-use serde_json::json;
+use arcx_core::prelude::*;
 
 /// 成功响应（200）
 pub fn success<T: Serialize>(data: T) -> impl IntoResponse {
