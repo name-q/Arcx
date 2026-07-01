@@ -215,23 +215,84 @@ pub fn load_raw_config() -> toml::Value {
 }
 
 /// 加载并合并配置文件为字符串
+///
+/// 加载顺序（从低到高优先级）：
+/// 1. config.default.toml 的 import 文件（按数组顺序）
+/// 2. config.default.toml 本体字段
+/// 3. config.{env}.toml 的 import 文件（按数组顺序）
+/// 4. config.{env}.toml 本体字段
 fn load_raw_str() -> String {
     let env = std::env::var("ARCX_ENV").unwrap_or_else(|_| "dev".to_string());
 
     // 读取默认配置
     let default_path = "config/config.default.toml";
-    let mut config_str = fs::read_to_string(default_path)
+    let default_str = fs::read_to_string(default_path)
         .unwrap_or_else(|_| panic!("Failed to read {}", default_path));
+
+    // 处理 default 的 import
+    let config_str = process_imports(&default_str, default_path);
 
     // 读取环境配置并合并
     let env_path = format!("config/config.{}.toml", env);
-    if Path::new(&env_path).exists() {
+    let config_str = if Path::new(&env_path).exists() {
         let env_str = fs::read_to_string(&env_path)
             .unwrap_or_else(|_| panic!("Failed to read {}", env_path));
-        config_str = merge_toml(&config_str, &env_str);
-    }
+        // 处理 env 的 import
+        let env_str = process_imports(&env_str, &env_path);
+        merge_toml(&config_str, &env_str)
+    } else {
+        config_str
+    };
 
     config_str
+}
+
+/// 处理配置文件中的 import 字段
+///
+/// import 声明的文件按顺序加载合并，最终与本体字段合并（本体优先级更高）。
+/// import 的文件不存在时直接 panic 报错，防止粗心遗漏。
+fn process_imports(toml_str: &str, source_file: &str) -> String {
+    let value: toml::Value = toml::from_str(toml_str)
+        .unwrap_or_else(|e| panic!("Failed to parse {}: {}", source_file, e));
+
+    // 提取 import 数组
+    let imports = match value.get("import") {
+        Some(toml::Value::Array(arr)) => arr
+            .iter()
+            .map(|v| {
+                v.as_str()
+                    .unwrap_or_else(|| panic!("import items must be strings in {}", source_file))
+                    .to_string()
+            })
+            .collect::<Vec<_>>(),
+        Some(_) => panic!("import must be an array of strings in {}", source_file),
+        None => return toml_str.to_string(),
+    };
+
+    // 按顺序加载 import 文件并合并
+    let mut merged = toml::Value::Table(toml::map::Map::new());
+    for import_path in &imports {
+        if !Path::new(import_path).exists() {
+            panic!(
+                "\n\x1b[31m✗ Config import error:\x1b[0m file \"{}\" not found (declared in {})\n",
+                import_path, source_file
+            );
+        }
+        let import_str = fs::read_to_string(import_path)
+            .unwrap_or_else(|_| panic!("Failed to read imported config: {}", import_path));
+        let import_value: toml::Value = toml::from_str(&import_str)
+            .unwrap_or_else(|e| panic!("Failed to parse {}: {}", import_path, e));
+        merge_value(&mut merged, &import_value);
+    }
+
+    // 本体字段（去掉 import key）覆盖 import 内容
+    let mut body = value.clone();
+    if let toml::Value::Table(ref mut table) = body {
+        table.remove("import");
+    }
+    merge_value(&mut merged, &body);
+
+    toml::to_string(&merged).expect("Failed to serialize config after import processing")
 }
 
 /// TOML 合并：环境配置覆盖默认配置

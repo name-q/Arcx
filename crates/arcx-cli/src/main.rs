@@ -123,6 +123,10 @@ async-trait = "0.1"
     // config/config.default.toml
     let default_config = format!(
         r#"# Arcx 默认配置
+#
+# import: 按顺序加载外部 toml 文件，合并进当前配置树
+# 本文件字段优先级高于 import 的文件；文件不存在时启动报错
+# import = ["config/custom/redis.toml", "config/custom/oss.toml"]
 
 [app]
 name = "{project_name}"
