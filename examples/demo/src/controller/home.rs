@@ -1,10 +1,6 @@
-//! Home Controller — 展示 ctx.services() 链式调用
+use crate::prelude::*;
 
-use arcx_core::prelude::*;
-use crate::helper::response;
-use crate::service::ServiceAccess;
-
-/// GET /api/home — 读配置
+/// GET /api/home
 pub async fn index(ctx: Ctx) -> AppResult<impl IntoResponse> {
     let name = &ctx.config().app.name;
     let version = &ctx.config().app.version;
@@ -25,18 +21,18 @@ pub async fn show(ctx: Ctx, Path(id): Path<String>) -> AppResult<impl IntoRespon
     Ok(response::success(user))
 }
 
-/// GET /api/home/:id/detail — Service 互调（user 内部调 order）
+/// GET /api/home/:id/detail — Service 互调
 pub async fn detail(ctx: Ctx, Path(id): Path<String>) -> AppResult<impl IntoResponse> {
     let data = ctx.services().user.get_user_with_orders(&id).await?;
     Ok(response::success(data))
 }
 
-/// POST /api/home — 不需要 Ctx，纯函数
+/// POST /api/home
 pub async fn create(Json(body): Json<Value>) -> AppResult<impl IntoResponse> {
     Ok(response::created(json!({ "item": body })))
 }
 
-/// DELETE /api/home/:id — 不需要 Ctx
+/// DELETE /api/home/:id
 pub async fn destroy(Path(_id): Path<u64>) -> AppResult<impl IntoResponse> {
     Ok(response::no_content())
 }

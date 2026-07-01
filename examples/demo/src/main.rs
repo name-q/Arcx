@@ -1,8 +1,7 @@
-//! Arcx Demo Application
-
 mod controller;
 mod helper;
 mod middleware;
+mod prelude;
 mod router;
 mod service;
 

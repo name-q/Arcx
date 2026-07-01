@@ -1,8 +1,6 @@
-//! Health Controller
+use crate::prelude::*;
 
-use arcx_core::prelude::*;
-
-/// GET /api/health — 直接返回 Json，不需要 Ctx 也行
+/// GET /api/health
 pub async fn check(ctx: Ctx) -> AppResult<impl IntoResponse> {
     Ok(Json(json!({
         "status": "ok",
