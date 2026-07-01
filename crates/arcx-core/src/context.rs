@@ -1,14 +1,15 @@
-//! 应用状态与请求上下文
+//! 应用共享状态（App 级）
+//!
+//! AppState 是整个应用生命周期的共享数据容器。
+//! 不同于 Ctx（请求级），AppState 跨所有请求存在。
 
-use axum::extract::{FromRef, FromRequestParts};
-use axum::http::request::Parts;
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::client::event_bus::EventBus;
 use crate::config::watcher::ConfigWatcher;
-use crate::config::{AppConfig, FromTomlValue};
+use crate::config::AppConfig;
 use crate::guard::AuthProvider;
 
 /// 应用共享状态
@@ -78,6 +79,11 @@ impl AppState {
             .and_then(|r| r.clone().downcast::<T>().ok())
     }
 
+    /// 获取资源池引用（Ctx 内部使用）
+    pub(crate) fn resources_ref(&self) -> &Arc<HashMap<TypeId, Arc<dyn Any + Send + Sync>>> {
+        &self.resources
+    }
+
     /// 获取事件总线
     pub fn event_bus(&self) -> &EventBus {
         &self.event_bus
@@ -86,107 +92,5 @@ impl AppState {
     /// 获取配置观察者
     pub fn config_watcher(&self) -> &ConfigWatcher {
         &self.config_watcher
-    }
-}
-
-/// 请求上下文 Context
-/// Controller handler 的第一个参数，自动从请求中提取
-///
-/// 用法：
-/// ```rust
-/// pub async fn index(ctx: Context) -> impl IntoResponse {
-///     // 强类型访问
-///     let port = ctx.config.server.port;
-///
-///     // 动态访问（安全索引任意配置）
-///     let redis_url: Option<String> = ctx.get("redis.url");
-///     let pool_size: Option<u32> = ctx.get("redis.pool_size");
-///
-///     // 插件资源
-///     let db = ctx.resource::<DbPool>().unwrap();
-/// }
-/// ```
-pub struct Context {
-    pub config: Arc<AppConfig>,
-    resources: Arc<HashMap<TypeId, Arc<dyn Any + Send + Sync>>>,
-    event_bus: EventBus,
-    config_watcher: ConfigWatcher,
-}
-
-impl Context {
-    /// 通过 dot-notation 路径安全获取配置值
-    ///
-    /// ```rust
-    /// let port: Option<u16> = ctx.get("server.port");
-    /// let name: Option<String> = ctx.get("app.name");
-    /// let custom: Option<String> = ctx.get("redis.url");
-    /// ```
-    pub fn get<T: FromTomlValue>(&self, path: &str) -> Option<T> {
-        self.config.get(path)
-    }
-
-    /// 将配置段反序列化为自定义结构
-    ///
-    /// ```rust
-    /// #[derive(Deserialize)]
-    /// struct RedisConfig { url: String, pool_size: u32 }
-    /// let redis: Option<RedisConfig> = ctx.get_as("redis");
-    /// ```
-    pub fn get_as<T: serde::de::DeserializeOwned>(&self, path: &str) -> Option<T> {
-        self.config.get_as(path)
-    }
-
-    /// 获取当前环境名
-    pub fn env(&self) -> &str {
-        &self.config.app.env
-    }
-
-    /// 是否为开发环境
-    pub fn is_dev(&self) -> bool {
-        self.config.app.env == "dev"
-    }
-
-    /// 获取插件注入的资源
-    /// 类型安全：编译期确定类型
-    pub fn resource<T: 'static + Send + Sync>(&self) -> Option<Arc<T>> {
-        self.resources
-            .get(&TypeId::of::<T>())
-            .and_then(|r| r.clone().downcast::<T>().ok())
-    }
-
-    /// 发送框架事件（非阻塞）
-    pub fn emit(&self, event: crate::client::event_bus::AppEvent) {
-        self.event_bus.emit(event);
-    }
-
-    /// 获取事件总线的订阅者
-    pub fn subscribe_events(&self) -> tokio::sync::broadcast::Receiver<crate::client::event_bus::AppEvent> {
-        self.event_bus.subscribe()
-    }
-
-    /// 获取配置变更 watcher
-    /// 返回一个 Receiver，可以 .changed().await 等待配置变更
-    pub fn watch_config(&self) -> tokio::sync::watch::Receiver<AppConfig> {
-        self.config_watcher.subscribe()
-    }
-}
-
-/// 实现 FromRequestParts，让 Context 能作为 handler 参数自动提取
-#[axum::async_trait]
-impl<S> FromRequestParts<S> for Context
-where
-    AppState: FromRef<S>,
-    S: Send + Sync,
-{
-    type Rejection = std::convert::Infallible;
-
-    async fn from_request_parts(_parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
-        let app_state = AppState::from_ref(state);
-        Ok(Context {
-            config: app_state.config,
-            resources: app_state.resources,
-            event_bus: app_state.event_bus,
-            config_watcher: app_state.config_watcher,
-        })
     }
 }

@@ -4,6 +4,7 @@ mod controller;
 mod helper;
 mod middleware;
 mod router;
+mod service;
 
 use arcx_core::prelude::*;
 use crate::middleware::auth::JwtAuth;

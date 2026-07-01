@@ -25,6 +25,7 @@
 pub mod client;
 pub mod config;
 pub mod context;
+pub mod ctx;
 pub mod error;
 pub mod extract;
 pub mod guard;
@@ -42,7 +43,8 @@ pub mod ws;
 pub mod prelude {
     pub use crate::Arcx;
     pub use crate::config::{AppConfig, FromTomlValue};
-    pub use crate::context::{AppState, Context};
+    pub use crate::context::AppState;
+    pub use crate::ctx::{Ctx, Service};
     pub use crate::error::{AppError, AppResult, FieldError};
     pub use crate::extract::ValidJson;
     pub use crate::guard::{auth_guard, AuthProvider, AuthUser};
@@ -58,6 +60,10 @@ pub mod prelude {
     pub use crate::client::{Client, Subscriber, Invoker, ClientError};
     pub use crate::config::watcher::ConfigWatcher;
     pub use crate::middleware::apply_global_middleware;
+
+    // 兼容旧代码：Context 作为 Ctx 的别名
+    #[deprecated(since = "0.1.4", note = "Use `Ctx` instead of `Context`")]
+    pub type Context = crate::ctx::Ctx;
 
     // Re-export 常用第三方依赖
     pub use axum;
@@ -116,15 +122,6 @@ impl Arcx {
     ///
     /// 开启后 `guarded_scope` 内的路由自动调用 provider 验证。
     /// 不注册则不能使用 `guarded_scope`（运行时会报错）。
-    ///
-    /// ## 示例
-    ///
-    /// ```rust
-    /// Arcx::new()
-    ///     .auth(JwtAuth::new("secret"))
-    ///     .routes(router::routes)
-    ///     .run().await;
-    /// ```
     pub fn auth(mut self, provider: impl AuthProvider) -> Self {
         self.auth_provider = Some(Box::new(provider));
         self
