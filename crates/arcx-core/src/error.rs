@@ -132,12 +132,3 @@ impl IntoResponse for AppError {
 
 /// Controller 统一返回类型
 pub type AppResult<T> = Result<T, AppError>;
-
-/// （已废弃）旧版成功响应包装 — 推荐使用 helper.rs 自定义响应格式
-#[deprecated(since = "0.1.2", note = "Use your own helper.rs for response formatting")]
-pub fn success<T: serde::Serialize>(data: T) -> Json<serde_json::Value> {
-    Json(json!({
-        "success": true,
-        "data": data
-    }))
-}

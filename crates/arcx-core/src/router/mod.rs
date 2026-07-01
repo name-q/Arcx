@@ -333,12 +333,3 @@ impl Default for ArcxRouter {
         Self::new()
     }
 }
-
-// ─── 旧宏（deprecated，向后兼容）───────────────────────────
-
-/// 注册 controller 路由（已废弃，请使用 Arcx::new().routes() 方式）
-#[macro_export]
-#[deprecated(since = "0.1.1", note = "Use Arcx::new().routes(router::routes) instead")]
-macro_rules! register_controllers {
-    ($($controller:path),* $(,)?) => {};
-}

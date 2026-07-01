@@ -71,10 +71,6 @@ pub mod prelude {
     pub use validator::Validate;
     pub use tracing;
     pub use tokio;
-
-    // 保留旧的 success 导出（已标记 deprecated）
-    #[allow(deprecated)]
-    pub use crate::error::success;
 }
 
 use std::any::TypeId;
