@@ -96,7 +96,7 @@ fn cmd_new(name: &str) {
     println!();
 
     // 创建目录结构
-    let dirs = ["src/controller", "src/service", "src/model", "src/middleware", "config"];
+    let dirs = ["src/controller", "src/service", "src/model", "src/middleware", "src/helper", "config"];
     for dir in &dirs {
         fs::create_dir_all(project_path.join(dir)).unwrap();
     }
@@ -216,8 +216,22 @@ async fn main() {{
     );
     fs::write(project_path.join("src/main.rs"), main_rs).unwrap();
 
-    // src/helper.rs
-    let helper_rs = r#"//! 响应 Helper — 项目的响应格式约定，按需修改
+    // src/helper/mod.rs
+    let helper_mod = r#"//! Helper 工具层 — controller / middleware / service 随时取用
+//!
+//! 在此目录下按需添加模块，统一从 crate::helper 导入使用。
+
+pub mod response;
+
+// 按需添加更多工具模块：
+// pub mod crypto;
+// pub mod validate;
+// pub mod time;
+"#;
+    fs::write(project_path.join("src/helper/mod.rs"), helper_mod).unwrap();
+
+    // src/helper/response.rs
+    let helper_response = r#"//! 响应格式封装 — 按需修改
 //!
 //! 这是你的项目代码，框架不依赖它。你可以：
 //! - 修改 JSON 结构
@@ -281,7 +295,7 @@ pub fn fail(code: i32, msg: &str) -> impl IntoResponse {
     }))
 }
 "#;
-    fs::write(project_path.join("src/helper.rs"), helper_rs).unwrap();
+    fs::write(project_path.join("src/helper/response.rs"), helper_response).unwrap();
 
     // src/router.rs
     let router_rs = r#"//! 路由声明 — 自由组合
@@ -313,11 +327,11 @@ pub fn routes(r: &mut ArcxRouter) {
         r#"//! Home Controller
 
 use arcx_core::prelude::*;
-use crate::helper;
+use crate::helper::response;
 
 /// GET /api/home
 pub async fn index(ctx: Context) -> AppResult<impl IntoResponse> {{
-    Ok(helper::success(json!({{
+    Ok(response::success(json!({{
         "name": ctx.config.app.name,
         "version": ctx.config.app.version,
         "message": "Welcome to Arcx!"
@@ -326,22 +340,22 @@ pub async fn index(ctx: Context) -> AppResult<impl IntoResponse> {{
 
 /// GET /api/home/:id
 pub async fn show(_ctx: Context, Path(id): Path<u64>) -> AppResult<impl IntoResponse> {{
-    Ok(helper::success(json!({{ "id": id }})))
+    Ok(response::success(json!({{ "id": id }})))
 }}
 
 /// POST /api/home
 pub async fn create(_ctx: Context, Json(body): Json<Value>) -> AppResult<impl IntoResponse> {{
-    Ok(helper::created(json!({{ "item": body }})))
+    Ok(response::created(json!({{ "item": body }})))
 }}
 
 /// PUT /api/home/:id
 pub async fn update(_ctx: Context, Path(id): Path<u64>, Json(body): Json<Value>) -> AppResult<impl IntoResponse> {{
-    Ok(helper::success(json!({{ "id": id, "updated": body }})))
+    Ok(response::success(json!({{ "id": id, "updated": body }})))
 }}
 
 /// DELETE /api/home/:id
 pub async fn destroy(_ctx: Context, Path(_id): Path<u64>) -> AppResult<impl IntoResponse> {{
-    Ok(helper::no_content())
+    Ok(response::no_content())
 }}
 "#
     );
@@ -452,7 +466,7 @@ arcx g s user
 src/
 ├── main.rs           # Entry point
 ├── router.rs         # Route declarations (free style)
-├── helper.rs         # Response helpers (customizable)
+├── helper/           # Response helpers & utilities (customizable)
 ├── controller/       # Handler functions
 ├── service/          # Business logic
 └── model/            # Database entities
@@ -492,31 +506,31 @@ fn cmd_generate_controller(name: &str) {
         r#"//! {struct_name} Controller
 
 use arcx_core::prelude::*;
-use crate::helper;
+use crate::helper::response;
 
 /// GET /api/{name}
 pub async fn index(_ctx: Context) -> AppResult<impl IntoResponse> {{
-    Ok(helper::success(json!({{ "items": [], "total": 0 }})))
+    Ok(response::success(json!({{ "items": [], "total": 0 }})))
 }}
 
 /// GET /api/{name}/:id
 pub async fn show(_ctx: Context, Path(id): Path<u64>) -> AppResult<impl IntoResponse> {{
-    Ok(helper::success(json!({{ "id": id }})))
+    Ok(response::success(json!({{ "id": id }})))
 }}
 
 /// POST /api/{name}
 pub async fn create(_ctx: Context, Json(body): Json<Value>) -> AppResult<impl IntoResponse> {{
-    Ok(helper::created(json!({{ "item": body }})))
+    Ok(response::created(json!({{ "item": body }})))
 }}
 
 /// PUT /api/{name}/:id
 pub async fn update(_ctx: Context, Path(id): Path<u64>, Json(body): Json<Value>) -> AppResult<impl IntoResponse> {{
-    Ok(helper::success(json!({{ "id": id, "updated": body }})))
+    Ok(response::success(json!({{ "id": id, "updated": body }})))
 }}
 
 /// DELETE /api/{name}/:id
 pub async fn destroy(_ctx: Context, Path(_id): Path<u64>) -> AppResult<impl IntoResponse> {{
-    Ok(helper::no_content())
+    Ok(response::no_content())
 }}
 "#
     );

@@ -1,16 +1,13 @@
-//! 响应 Helper — 项目的响应格式约定，按需修改
-#![allow(dead_code)]
+//! 响应格式封装 — 按需修改
 //!
-//! 这是用户代码，框架不依赖它。你可以：
-//! - 修改 success 的 JSON 结构
+//! 这是你的项目代码，框架不依赖它。你可以：
+//! - 修改 JSON 结构
 //! - 添加自己的响应方法
 //! - 或者完全不用它，直接返回 axum 原生类型
 
-use axum::http::StatusCode;
-use axum::response::IntoResponse;
-use axum::Json;
-use serde::Serialize;
-use serde_json::json;
+#![allow(dead_code)]
+
+use arcx_core::prelude::*;
 
 /// 成功响应（200）
 pub fn success<T: Serialize>(data: T) -> impl IntoResponse {
