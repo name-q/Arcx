@@ -41,7 +41,7 @@ pub mod ws;
 // Re-export 核心类型
 pub mod prelude {
     pub use crate::Arcx;
-    pub use crate::config::AppConfig;
+    pub use crate::config::{AppConfig, FromTomlValue};
     pub use crate::context::{AppState, Context};
     pub use crate::error::{AppError, AppResult, FieldError};
     pub use crate::extract::ValidJson;

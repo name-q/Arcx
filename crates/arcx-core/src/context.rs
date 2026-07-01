@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use crate::client::event_bus::EventBus;
 use crate::config::watcher::ConfigWatcher;
-use crate::config::AppConfig;
+use crate::config::{AppConfig, FromTomlValue};
 use crate::guard::AuthProvider;
 
 /// 应用共享状态
@@ -95,9 +95,15 @@ impl AppState {
 /// 用法：
 /// ```rust
 /// pub async fn index(ctx: Context) -> impl IntoResponse {
+///     // 强类型访问
+///     let port = ctx.config.server.port;
+///
+///     // 动态访问（安全索引任意配置）
+///     let redis_url: Option<String> = ctx.get("redis.url");
+///     let pool_size: Option<u32> = ctx.get("redis.pool_size");
+///
+///     // 插件资源
 ///     let db = ctx.resource::<DbPool>().unwrap();
-///     ctx.emit(AppEvent::Custom { kind: "user.created".into(), payload: "{}".into() });
-///     let config_rx = ctx.watch_config();
 /// }
 /// ```
 pub struct Context {
@@ -108,6 +114,28 @@ pub struct Context {
 }
 
 impl Context {
+    /// 通过 dot-notation 路径安全获取配置值
+    ///
+    /// ```rust
+    /// let port: Option<u16> = ctx.get("server.port");
+    /// let name: Option<String> = ctx.get("app.name");
+    /// let custom: Option<String> = ctx.get("redis.url");
+    /// ```
+    pub fn get<T: FromTomlValue>(&self, path: &str) -> Option<T> {
+        self.config.get(path)
+    }
+
+    /// 将配置段反序列化为自定义结构
+    ///
+    /// ```rust
+    /// #[derive(Deserialize)]
+    /// struct RedisConfig { url: String, pool_size: u32 }
+    /// let redis: Option<RedisConfig> = ctx.get_as("redis");
+    /// ```
+    pub fn get_as<T: serde::de::DeserializeOwned>(&self, path: &str) -> Option<T> {
+        self.config.get_as(path)
+    }
+
     /// 获取当前环境名
     pub fn env(&self) -> &str {
         &self.config.app.env
