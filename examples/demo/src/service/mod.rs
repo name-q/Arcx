@@ -1,2 +1,4 @@
-pub mod user;
-pub mod order;
+arcx_core::services! {
+    user: UserService,
+    order: OrderService,
+}

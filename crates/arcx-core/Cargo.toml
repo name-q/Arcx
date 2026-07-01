@@ -39,6 +39,9 @@ jsonwebtoken = "9"
 
 # Async
 async-trait = "0.1"
+
+# Macros
+arcx-macros = { path = "../arcx-macros", version = "0.1.4" }
 futures-util = "0.3"
 tokio-stream = { version = "0.1", features = ["sync"] }
 

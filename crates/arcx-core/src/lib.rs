@@ -9,6 +9,7 @@
 //! use arcx_core::prelude::*;
 //!
 //! mod controller;
+//! mod service;
 //! mod router;
 //!
 //! #[tokio::main]
@@ -36,11 +37,16 @@ pub mod middleware;
 pub mod plugin;
 pub mod router;
 pub mod schedule;
+pub mod service_macro;
 pub mod session;
 pub mod ws;
 
+// Re-export proc-macros
+pub use arcx_macros::service;
+
 // Re-export 核心类型
 pub mod prelude {
+    pub use std::sync::Arc;
     pub use crate::Arcx;
     pub use crate::config::{AppConfig, FromTomlValue};
     pub use crate::context::AppState;
@@ -60,6 +66,9 @@ pub mod prelude {
     pub use crate::client::{Client, Subscriber, Invoker, ClientError};
     pub use crate::config::watcher::ConfigWatcher;
     pub use crate::middleware::apply_global_middleware;
+
+    // Re-export #[service] 宏
+    pub use arcx_macros::service;
 
     // 兼容旧代码：Context 作为 Ctx 的别名
     #[deprecated(since = "0.1.4", note = "Use `Ctx` instead of `Context`")]
@@ -94,23 +103,12 @@ use guard::AuthProvider;
 /// - AppState 构建
 /// - 路由组装 & 中间件
 /// - HTTP 服务启动 & graceful shutdown
-///
-/// ## 用法
-///
-/// ```rust,no_run
-/// Arcx::new()
-///     .auth(my_auth_provider)
-///     .routes(router::routes)
-///     .run()
-///     .await;
-/// ```
 pub struct Arcx {
     routes_fn: Option<Box<dyn FnOnce(&mut router::ArcxRouter) + Send>>,
     auth_provider: Option<Box<dyn AuthProvider>>,
 }
 
 impl Arcx {
-    /// 创建 Arcx 实例
     pub fn new() -> Self {
         Self {
             routes_fn: None,
@@ -118,25 +116,16 @@ impl Arcx {
         }
     }
 
-    /// 注册鉴权提供者
-    ///
-    /// 开启后 `guarded_scope` 内的路由自动调用 provider 验证。
-    /// 不注册则不能使用 `guarded_scope`（运行时会报错）。
     pub fn auth(mut self, provider: impl AuthProvider) -> Self {
         self.auth_provider = Some(Box::new(provider));
         self
     }
 
-    /// 注册路由（传入 router.rs 中的 routes 函数）
     pub fn routes(mut self, f: fn(&mut router::ArcxRouter)) -> Self {
         self.routes_fn = Some(Box::new(f));
         self
     }
 
-    /// 启动服务
-    ///
-    /// 内部完成所有初始化流程并监听 HTTP 端口。
-    /// 支持 Ctrl+C graceful shutdown。
     pub async fn run(self) {
         // 1. 加载配置
         let cfg = config::AppConfig::load();
@@ -210,14 +199,10 @@ impl Arcx {
         tracing::info!("Server stopped.");
     }
 
-    // ─── 兼容旧用法的静态方法 ───────────────────────────
-
-    /// 加载强类型配置（用于需要手动控制启动流程的场景）
     pub fn load_config() -> config::AppConfig {
         config::AppConfig::load()
     }
 
-    /// 加载原始配置（用于插件系统）
     pub fn load_raw_config() -> toml::Value {
         config::load_raw_config()
     }

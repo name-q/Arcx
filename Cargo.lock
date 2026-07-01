@@ -108,6 +108,7 @@ dependencies = [
 name = "arcx-core"
 version = "0.1.4"
 dependencies = [
+ "arcx-macros",
  "async-trait",
  "axum",
  "base64",
@@ -144,6 +145,15 @@ dependencies = [
  "tokio",
  "tracing",
  "validator",
+]
+
+[[package]]
+name = "arcx-macros"
+version = "0.1.4"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.118",
 ]
 
 [[package]]

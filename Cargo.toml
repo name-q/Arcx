@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/arcx-core",
+    "crates/arcx-macros",
     "crates/arcx-cli",
     "examples/demo",
 ]

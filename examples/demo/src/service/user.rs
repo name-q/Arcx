@@ -1,19 +1,9 @@
-//! User Service — 展示 Service trait + 互调
+//! User Service — 干净的业务逻辑，无胶水代码
 
-use std::sync::Arc;
 use arcx_core::prelude::*;
-use crate::service::order::OrderService;
+use super::order::OrderService;
 
-pub struct UserService {
-    ctx: Ctx,
-}
-
-impl Service for UserService {
-    fn create(ctx: &Ctx) -> Arc<Self> {
-        Arc::new(Self { ctx: ctx.clone() })
-    }
-}
-
+#[service]
 impl UserService {
     /// 获取用户资料
     pub async fn get_profile(&self, user_id: &str) -> AppResult<Value> {
@@ -28,7 +18,7 @@ impl UserService {
     pub async fn get_user_with_orders(&self, user_id: &str) -> AppResult<Value> {
         let profile = self.get_profile(user_id).await?;
 
-        // Service 互调：通过 ctx.service::<T>()
+        // Service 互调：通过 self.ctx（由 #[service] 宏自动生成）
         let order_svc = self.ctx.service::<OrderService>();
         let orders = order_svc.find_by_user(user_id).await?;
 

@@ -1,14 +1,13 @@
-//! Home Controller — 展示 Ctx 可选使用
+//! Home Controller — 展示 ctx.services() 链式调用
 
 use arcx_core::prelude::*;
 use crate::helper::response;
+use crate::service::ServiceAccess;
 
-/// GET /api/home — 需要读配置，使用 Ctx
+/// GET /api/home — 读配置
 pub async fn index(ctx: Ctx) -> AppResult<impl IntoResponse> {
     let name = &ctx.config().app.name;
     let version = &ctx.config().app.version;
-
-    // 动态访问（可读取 toml 中任意自定义字段）
     let port: Option<u16> = ctx.get("server.port");
     let custom: Option<String> = ctx.get("custom.greeting");
 
@@ -20,20 +19,21 @@ pub async fn index(ctx: Ctx) -> AppResult<impl IntoResponse> {
     })))
 }
 
-/// GET /api/home/:id — 需要 Ctx
-pub async fn show(ctx: Ctx, Path(id): Path<u64>) -> AppResult<impl IntoResponse> {
-    let env = ctx.env();
-    Ok(response::success(json!({ "id": id, "env": env })))
+/// GET /api/home/:id — ctx.services().user 链式调用
+pub async fn show(ctx: Ctx, Path(id): Path<String>) -> AppResult<impl IntoResponse> {
+    let user = ctx.services().user.get_profile(&id).await?;
+    Ok(response::success(user))
 }
 
-/// POST /api/home — 不需要 Ctx，直接不写
+/// GET /api/home/:id/detail — Service 互调（user 内部调 order）
+pub async fn detail(ctx: Ctx, Path(id): Path<String>) -> AppResult<impl IntoResponse> {
+    let data = ctx.services().user.get_user_with_orders(&id).await?;
+    Ok(response::success(data))
+}
+
+/// POST /api/home — 不需要 Ctx，纯函数
 pub async fn create(Json(body): Json<Value>) -> AppResult<impl IntoResponse> {
     Ok(response::created(json!({ "item": body })))
-}
-
-/// PUT /api/home/:id — 不需要 Ctx
-pub async fn update(Path(id): Path<u64>, Json(body): Json<Value>) -> AppResult<impl IntoResponse> {
-    Ok(response::success(json!({ "id": id, "updated": body })))
 }
 
 /// DELETE /api/home/:id — 不需要 Ctx

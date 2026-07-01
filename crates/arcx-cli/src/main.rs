@@ -210,7 +210,6 @@ use arcx_core::prelude::*;
 #[tokio::main]
 async fn main() {{
     Arcx::new()
-        // 开启鉴权后取消注释，guarded_scope 路由会自动调用 authenticate
         // .auth(JwtAuth::new("your-secret-key"))
         .routes(router::routes)
         .run()
@@ -332,14 +331,12 @@ pub fn routes(r: &mut ArcxRouter) {
 
 use arcx_core::prelude::*;
 use crate::helper::response;
+use crate::service::ServiceAccess;
 
-/// GET /api/home
-pub async fn index(ctx: Context) -> AppResult<impl IntoResponse> {{
-    // 强类型访问
-    let name = &ctx.config.app.name;
-    let version = &ctx.config.app.version;
-
-    // 动态访问（可读取 toml 中任意自定义字段）
+/// GET /api/home — 需要读配置时使用 Ctx
+pub async fn index(ctx: Ctx) -> AppResult<impl IntoResponse> {{
+    let name = &ctx.config().app.name;
+    let version = &ctx.config().app.version;
     let port: Option<u16> = ctx.get("server.port");
 
     Ok(response::success(json!({{
@@ -350,24 +347,24 @@ pub async fn index(ctx: Context) -> AppResult<impl IntoResponse> {{
     }})))
 }}
 
-/// GET /api/home/:id
-pub async fn show(ctx: Context, Path(id): Path<u64>) -> AppResult<impl IntoResponse> {{
+/// GET /api/home/:id — 需要 Ctx
+pub async fn show(ctx: Ctx, Path(id): Path<u64>) -> AppResult<impl IntoResponse> {{
     let env = ctx.env();
     Ok(response::success(json!({{ "id": id, "env": env }})))
 }}
 
-/// POST /api/home
-pub async fn create(_ctx: Context, Json(body): Json<Value>) -> AppResult<impl IntoResponse> {{
+/// POST /api/home — 不需要 Ctx，直接不写
+pub async fn create(Json(body): Json<Value>) -> AppResult<impl IntoResponse> {{
     Ok(response::created(json!({{ "item": body }})))
 }}
 
-/// PUT /api/home/:id
-pub async fn update(_ctx: Context, Path(id): Path<u64>, Json(body): Json<Value>) -> AppResult<impl IntoResponse> {{
+/// PUT /api/home/:id — 不需要 Ctx
+pub async fn update(Path(id): Path<u64>, Json(body): Json<Value>) -> AppResult<impl IntoResponse> {{
     Ok(response::success(json!({{ "id": id, "updated": body }})))
 }}
 
-/// DELETE /api/home/:id
-pub async fn destroy(_ctx: Context, Path(_id): Path<u64>) -> AppResult<impl IntoResponse> {{
+/// DELETE /api/home/:id — 不需要 Ctx
+pub async fn destroy(Path(_id): Path<u64>) -> AppResult<impl IntoResponse> {{
     Ok(response::no_content())
 }}
 "#
@@ -381,7 +378,9 @@ pub async fn destroy(_ctx: Context, Path(_id): Path<u64>) -> AppResult<impl Into
     // src/service/mod.rs
     fs::write(
         project_path.join("src/service/mod.rs"),
-        "// Service 层：封装业务逻辑\n",
+        "// Service 层 — 通过 arcx generate service <name> 添加
+// 添加后自动注册到 services! 宏中
+",
     )
     .unwrap();
 
@@ -520,29 +519,30 @@ fn cmd_generate_controller(name: &str) {
 
 use arcx_core::prelude::*;
 use crate::helper::response;
+use crate::service::ServiceAccess;
 
 /// GET /api/{name}
-pub async fn index(_ctx: Context) -> AppResult<impl IntoResponse> {{
+pub async fn index() -> AppResult<impl IntoResponse> {{
     Ok(response::success(json!({{ "items": [], "total": 0 }})))
 }}
 
 /// GET /api/{name}/:id
-pub async fn show(_ctx: Context, Path(id): Path<u64>) -> AppResult<impl IntoResponse> {{
+pub async fn show(Path(id): Path<u64>) -> AppResult<impl IntoResponse> {{
     Ok(response::success(json!({{ "id": id }})))
 }}
 
 /// POST /api/{name}
-pub async fn create(_ctx: Context, Json(body): Json<Value>) -> AppResult<impl IntoResponse> {{
+pub async fn create(Json(body): Json<Value>) -> AppResult<impl IntoResponse> {{
     Ok(response::created(json!({{ "item": body }})))
 }}
 
 /// PUT /api/{name}/:id
-pub async fn update(_ctx: Context, Path(id): Path<u64>, Json(body): Json<Value>) -> AppResult<impl IntoResponse> {{
+pub async fn update(Path(id): Path<u64>, Json(body): Json<Value>) -> AppResult<impl IntoResponse> {{
     Ok(response::success(json!({{ "id": id, "updated": body }})))
 }}
 
 /// DELETE /api/{name}/:id
-pub async fn destroy(_ctx: Context, Path(_id): Path<u64>) -> AppResult<impl IntoResponse> {{
+pub async fn destroy(Path(_id): Path<u64>) -> AppResult<impl IntoResponse> {{
     Ok(response::no_content())
 }}
 "#
@@ -580,13 +580,8 @@ fn cmd_generate_service(name: &str) {
 
 use arcx_core::prelude::*;
 
-pub struct {struct_name}Service;
-
+#[service]
 impl {struct_name}Service {{
-    pub fn new() -> Self {{
-        Self
-    }}
-
     pub async fn find_all(&self) -> AppResult<Vec<Value>> {{
         Ok(vec![])
     }}
@@ -598,6 +593,12 @@ impl {struct_name}Service {{
     pub async fn create(&self, _data: Value) -> AppResult<Value> {{
         Ok(json!({{}}))
     }}
+
+    // Service 互调示例：
+    // pub async fn find_with_related(&self, id: u64) -> AppResult<Value> {{
+    //     let orders = self.ctx.service::<OrderService>().find_by_user(id).await?;
+    //     Ok(json!({{ "orders": orders }}))
+    // }}
 }}
 "#
     );
@@ -606,7 +607,7 @@ impl {struct_name}Service {{
     fs::write(&path, content).unwrap();
     println!("✓ Created: {}", path);
 
-    auto_register_mod("src/service/mod.rs", name);
+    auto_register_service("src/service/mod.rs", name, &to_pascal_case(name));
     println!("✓ Auto-registered in service/mod.rs");
 }
 
@@ -738,17 +739,68 @@ fn cmd_info() {
     let controllers = count_rs_files("src/controller");
     let services = count_rs_files("src/service");
     let models = count_rs_files("src/model");
+    let helpers = count_rs_files("src/helper");
+    let middlewares = count_rs_files("src/middleware");
 
-    println!("  Controllers: {}", controllers);
-    println!("  Services:    {}", services);
-    println!("  Models:      {}", models);
+    println!("  Controllers:  {}", controllers);
+    println!("  Services:     {}", services);
+    println!("  Models:       {}", models);
+    println!("  Helpers:      {}", helpers);
+    println!("  Middlewares:  {}", middlewares);
     println!();
 
+    // 用户自定义 Config 统计（扫描 config/ 目录，含子目录）
     if Path::new("config").exists() {
-        println!("  Config files:");
-        if let Ok(entries) = fs::read_dir("config") {
+        let mut config_files: Vec<String> = Vec::new();
+        scan_config_dir("config", &mut config_files, 0);
+        config_files.sort();
+        println!("  Config files: {}", config_files.len());
+        for f in &config_files {
+            println!("    - {}", f);
+        }
+    }
+    println!();
+
+    // Helper 详情
+    if Path::new("src/helper").exists() && helpers > 0 {
+        println!("  Helper modules:");
+        if let Ok(entries) = fs::read_dir("src/helper") {
             for entry in entries.flatten() {
-                println!("    - {}", entry.file_name().to_string_lossy());
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name.ends_with(".rs") && name != "mod.rs" {
+                    println!("    - {}", name.trim_end_matches(".rs"));
+                }
+            }
+        }
+        println!();
+    }
+}
+
+/// 递归扫描 config 目录中的 .toml 文件，返回相对于 config/ 的路径
+fn scan_config_dir(dir: &str, files: &mut Vec<String>, depth: usize) {
+    if depth > 3 {
+        return;
+    }
+    let path = Path::new(dir);
+    if !path.exists() {
+        return;
+    }
+    if let Ok(entries) = fs::read_dir(path) {
+        for entry in entries.flatten() {
+            let entry_path = entry.path();
+            if entry_path.is_dir() {
+                scan_config_dir(
+                    entry_path.to_str().unwrap_or(""),
+                    files,
+                    depth + 1,
+                );
+            } else {
+                let name = entry_path.to_string_lossy().to_string();
+                if name.ends_with(".toml") {
+                    // 去掉 "config/" 前缀，展示相对路径
+                    let display = name.strip_prefix("config/").unwrap_or(&name);
+                    files.push(display.to_string());
+                }
             }
         }
     }
@@ -776,6 +828,62 @@ fn auto_register_mod(mod_path: &str, name: &str) {
     let mut new_content = content.trim_end().to_string();
     new_content.push_str(&format!("\npub mod {};\n", name));
     fs::write(mod_file, new_content).unwrap();
+}
+
+/// 注册 Service 到 services! 宏（service/mod.rs）
+fn auto_register_service(mod_path: &str, name: &str, struct_name: &str) {
+    let mod_file = Path::new(mod_path);
+    if !mod_file.exists() {
+        // 第一个 service — 创建 services! 宏
+        let content = format!(
+            "arcx_core::services! {{\n    {}: {}Service,\n}}\n",
+            name, struct_name
+        );
+        fs::write(mod_file, content).unwrap();
+        return;
+    }
+
+    let content = fs::read_to_string(mod_file).unwrap();
+
+    // 检查是否已注册
+    let entry = format!("{}: {}Service", name, struct_name);
+    if content.contains(&entry) {
+        return;
+    }
+
+    // 检查是否有 services! 宏
+    if content.contains("arcx_core::services!") {
+        // 在 } 前插入新条目
+        if let Some(pos) = content.rfind('}') {
+            let new_content = format!(
+                "{}    {}: {}Service,\n{}",
+                &content[..pos], name, struct_name, &content[pos..]
+            );
+            fs::write(mod_file, new_content).unwrap();
+        }
+    } else {
+        // 旧格式 mod.rs — 转换为 services! 宏格式
+        // 收集已有 pub mod 声明
+        let mut entries: Vec<String> = content
+            .lines()
+            .filter_map(|l| {
+                let trimmed = l.trim();
+                if trimmed.starts_with("pub mod ") && trimmed.ends_with(';') {
+                    let mod_name = trimmed
+                        .strip_prefix("pub mod ")
+                        .unwrap()
+                        .strip_suffix(';').unwrap();
+                    let pascal = to_pascal_case(mod_name);
+                    Some(format!("    {}: {}Service,", mod_name, pascal))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        entries.push(format!("    {}: {}Service,", name, struct_name));
+        let new_content = format!("arcx_core::services! {{\n{}\n}}\n", entries.join("\n"));
+        fs::write(mod_file, new_content).unwrap();
+    }
 }
 
 /// 在 router.rs 中追加自由路由声明
