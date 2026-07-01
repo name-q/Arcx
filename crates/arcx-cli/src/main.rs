@@ -37,7 +37,7 @@ enum Commands {
     /// 启动开发服务（支持热重载）
     Dev {
         /// 指定端口
-        #[arg(short, long, default_value = "3000")]
+        #[arg(short, long, default_value = "8765")]
         port: u16,
     },
     /// 显示项目信息
@@ -131,7 +131,7 @@ env = "dev"
 
 [server]
 host = "127.0.0.1"
-port = 3000
+port = 8765
 
 [middleware]
 cors = true

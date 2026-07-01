@@ -35,10 +35,10 @@ enum ChangeKind {
 
 pub fn run(cli_port: u16) {
     // 读取配置文件端口
-    let port = if cli_port != 3000 {
+    let port = if cli_port != 8765 {
         cli_port
     } else {
-        read_config_port().unwrap_or(3000)
+        read_config_port().unwrap_or(8765)
     };
 
     println!("⚡ Arcx dev server");
