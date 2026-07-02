@@ -1,6 +1,6 @@
 [package]
 name = "arcx-macros"
-version = "0.1.5"
+version = "0.1.6"
 edition = "2021"
 description = "Procedural macros for Arcx framework"
 authors = ["name-q <1620206666@qq.com>"]

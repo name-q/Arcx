@@ -1,6 +1,6 @@
 [package]
 name = "arcx-cli"
-version = "0.1.5"
+version = "0.1.6"
 edition = "2021"
 description = "CLI tool for Arcx framework - project scaffolding and code generation"
 authors = ["name-q <1620206666@qq.com>"]
@@ -15,7 +15,7 @@ path = "src/main.rs"
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
-notify = "6"
-notify-debouncer-mini = "0.4"
-nix = { version = "0.29", features = ["signal", "process"] }
+notify = "8"
+notify-debouncer-mini = "0.7"
+nix = { version = "0.31", features = ["signal", "process"] }
 ctrlc = "3"

@@ -1,6 +1,6 @@
 [package]
 name = "arcx-core"
-version = "0.1.5"
+version = "0.1.6"
 edition = "2021"
 description = "Arcx - A convention-over-configuration web framework for Rust with AI orchestration capabilities"
 authors = ["name-q <1620206666@qq.com>"]
@@ -41,7 +41,7 @@ jsonwebtoken = "9"
 async-trait = "0.1"
 
 # Macros
-arcx-macros = { path = "../arcx-macros", version = "0.1.5" }
+arcx-macros = { path = "../arcx-macros", version = "0.1.6" }
 futures-util = "0.3"
 tokio-stream = { version = "0.1", features = ["sync"] }
 
