@@ -95,7 +95,7 @@ dependencies = [
 
 [[package]]
 name = "arcx-cli"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "clap",
  "ctrlc",
@@ -106,7 +106,7 @@ dependencies = [
 
 [[package]]
 name = "arcx-core"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "arcx-macros",
  "async-trait",
@@ -150,7 +150,7 @@ dependencies = [
 
 [[package]]
 name = "arcx-macros"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "proc-macro2",
  "quote",

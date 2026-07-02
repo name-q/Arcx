@@ -8,7 +8,8 @@
 //! 配置方式：
 //! ```toml
 //! [security]
-//! csrf = true                    # CSRF 防护
+//! enable = true                  # 启用安全中间件
+//! csrf = false                   # CSRF 防护（API 模式默认关）
 //! xss_protection = true          # X-XSS-Protection
 //! frame_deny = true              # X-Frame-Options: DENY
 //! content_type_nosniff = true    # X-Content-Type-Options: nosniff
@@ -25,8 +26,11 @@ use crate::context::AppState;
 /// 安全配置
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct SecurityConfig {
-    /// CSRF 防护
+    /// 是否启用安全中间件
     #[serde(default = "default_true")]
+    pub enable: bool,
+    /// CSRF 防护
+    #[serde(default)]
     pub csrf: bool,
     /// X-XSS-Protection 头
     #[serde(default = "default_true")]
@@ -51,7 +55,8 @@ pub struct SecurityConfig {
 impl Default for SecurityConfig {
     fn default() -> Self {
         Self {
-            csrf: true,
+            enable: true,
+            csrf: false,
             xss_protection: true,
             frame_deny: true,
             content_type_nosniff: true,

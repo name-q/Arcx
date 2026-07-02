@@ -8,12 +8,12 @@ debug = false
 host = "127.0.0.1"
 port = 8765
 
-# === 日志配置 ===
+# === 日志系统 ===
 [logger]
 level = "info"
 dir = "logs"
 enable_console = true
-enable_file = false       # 生产环境设 true
+enable_file = false
 
 # === HTTP 客户端 ===
 [httpclient]
@@ -22,15 +22,23 @@ max_retries = 0
 user_agent = "Arcx/0.1"
 connect_timeout = 10
 
-# === 中间件开关 ===
-[middleware]
-cors = true
-logger = true
-security = true
+# === CORS ===
+[cors]
+enable = true
+# allowed_origins = ["http://localhost:3000"]
+# allowed_methods = ["GET", "POST", "PUT", "DELETE"]
+# allowed_headers = ["Content-Type", "Authorization"]
+# allow_credentials = false
+# max_age = 86400
 
-# === 安全配置 ===
+# === 请求日志 ===
+[request_logger]
+enable = true
+
+# === 安全中间件 ===
 [security]
-csrf = false              # API 框架默认关闭 CSRF（前后端分离场景）
+enable = true
+csrf = false
 xss_protection = true
 frame_deny = true
 content_type_nosniff = true
@@ -39,7 +47,6 @@ hsts_max_age = 31536000
 csrf_ignore = ["/api/webhook"]
 
 # === Session ===
-# 需要时取消注释
 # [session]
 # secret = "your-secret-key-at-least-32-characters!!"
 # cookie_name = "arcx.sid"

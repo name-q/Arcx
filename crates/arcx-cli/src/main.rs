@@ -138,10 +138,11 @@ env = "dev"
 host = "127.0.0.1"
 port = 8765
 
-[middleware]
-cors = true
-logger = true
-security = true
+[cors]
+enable = true
+
+[request_logger]
+enable = true
 
 [logger]
 level = "info"
@@ -153,6 +154,7 @@ timeout = 30
 max_retries = 0
 
 [security]
+enable = true
 csrf = false
 
 [schedule]
@@ -173,8 +175,8 @@ env = "prod"
 host = "0.0.0.0"
 port = 8080
 
-[middleware]
-cors = false
+[cors]
+enable = false
 
 [logger]
 level = "info"
@@ -182,6 +184,7 @@ enable_file = true
 dir = "logs"
 
 [security]
+enable = true
 csrf = true
 hsts = true
 "#;

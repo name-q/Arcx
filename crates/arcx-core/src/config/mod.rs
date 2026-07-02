@@ -33,28 +33,53 @@ fn default_env() -> String {
     "dev".to_string()
 }
 
-/// 中间件配置
+/// CORS 配置
 #[derive(Debug, Deserialize, Clone)]
-pub struct MiddlewareConfig {
+pub struct CorsConfig {
+    /// 是否启用
     #[serde(default = "default_true")]
-    pub cors: bool,
-    #[serde(default = "default_true")]
-    pub logger: bool,
-    #[serde(default = "default_true")]
-    pub security: bool,
+    pub enable: bool,
+    /// 允许的来源（为空或包含 "*" 则允许所有）
+    #[serde(default)]
+    pub allowed_origins: Vec<String>,
+    /// 允许的请求方法
+    #[serde(default)]
+    pub allowed_methods: Vec<String>,
+    /// 允许的请求头
+    #[serde(default)]
+    pub allowed_headers: Vec<String>,
+    /// 是否允许携带凭据
+    #[serde(default)]
+    pub allow_credentials: bool,
+    /// 预检请求缓存时间（秒）
+    #[serde(default)]
+    pub max_age: Option<u64>,
 }
 
-fn default_true() -> bool {
-    true
-}
-
-impl Default for MiddlewareConfig {
+impl Default for CorsConfig {
     fn default() -> Self {
         Self {
-            cors: true,
-            logger: true,
-            security: true,
+            enable: true,
+            allowed_origins: vec![],
+            allowed_methods: vec![],
+            allowed_headers: vec![],
+            allow_credentials: false,
+            max_age: None,
         }
+    }
+}
+
+/// 请求日志配置
+#[derive(Debug, Deserialize, Clone)]
+pub struct RequestLoggerConfig {
+    /// 是否启用请求日志中间件
+    #[serde(default = "default_true")]
+    pub enable: bool,
+}
+
+impl Default for RequestLoggerConfig {
+    fn default() -> Self {
+        Self { enable: true }
     }
 }
 
@@ -77,7 +102,9 @@ pub struct AppConfig {
     pub server: ServerConfig,
     pub app: AppInfo,
     #[serde(default)]
-    pub middleware: MiddlewareConfig,
+    pub cors: CorsConfig,
+    #[serde(default)]
+    pub request_logger: RequestLoggerConfig,
     #[serde(default)]
     pub logger: crate::logger::LoggerConfig,
     #[serde(default)]
@@ -94,6 +121,10 @@ pub struct AppConfig {
     raw: Option<toml::Value>,
 }
 
+fn default_true() -> bool {
+    true
+}
+
 impl AppConfig {
     /// 加载配置（强类型解析 + 保留原始值）
     pub fn load() -> Self {
@@ -107,9 +138,9 @@ impl AppConfig {
     /// 判断某个中间件是否启用
     pub fn middleware_enabled(&self, name: &str) -> bool {
         match name {
-            "cors" => self.middleware.cors,
-            "logger" => self.middleware.logger,
-            "security" => self.middleware.security,
+            "cors" => self.cors.enable,
+            "logger" => self.request_logger.enable,
+            "security" => self.security.as_ref().map(|s| s.enable).unwrap_or(true),
             _ => false,
         }
     }
