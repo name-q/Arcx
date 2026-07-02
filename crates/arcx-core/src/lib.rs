@@ -50,7 +50,7 @@ pub mod prelude {
     pub use crate::Arcx;
     pub use crate::config::{AppConfig, FromTomlValue};
     pub use crate::context::AppState;
-    pub use crate::ctx::{Ctx, Service};
+    pub use crate::ctx::{Ctx, Service, ReqParts};
     pub use crate::error::{AppError, AppResult, FieldError};
     pub use crate::extract::ValidJson;
     pub use crate::guard::{auth_guard, AuthProvider, AuthUser};
@@ -77,9 +77,12 @@ pub mod prelude {
     // Re-export 常用第三方依赖
     pub use axum;
     pub use axum::extract::Path;
-    pub use axum::http::StatusCode;
+    pub use axum::http::{StatusCode, Method, Uri};
     pub use axum::response::IntoResponse;
     pub use axum::Json;
+    pub use axum::extract::Request;
+    pub use axum::response::Response;
+    pub use axum::middleware::Next;
     pub use async_trait::async_trait;
     pub use serde::{Deserialize, Serialize};
     pub use serde_json::{self, json, Value};

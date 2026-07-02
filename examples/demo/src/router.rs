@@ -6,6 +6,7 @@ use crate::controller;
 pub fn routes(r: &mut ArcxRouter) {
     // ─── 公开路由 ───────────────────────────
     r.get("/api/home", controller::home::index);
+    r.get("/api/home/query", controller::home::query_demo);
     r.get("/api/home/:id", controller::home::show);
     r.get("/api/home/:id/detail", controller::home::detail);
     r.post("/api/home", controller::home::create);

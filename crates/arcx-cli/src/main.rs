@@ -277,11 +277,19 @@ pub fn fail(code: i32, msg: &str) -> impl IntoResponse {
     // src/router.rs
     let router_rs = r#"use crate::prelude::*;
 use crate::controller;
+// use crate::middleware;
 
 pub fn routes(r: &mut ArcxRouter) {
+    // 全局中间件（可选）
+    // r.middleware(middleware::log::handle);
+
     r.get("/api/home", controller::home::index);
     r.get("/api/home/:id", controller::home::show);
     r.post("/api/home", controller::home::create);
+
+    // 路由级中间件示例
+    // r.get("/api/protected", controller::home::index)
+    //     .middleware(middleware::auth::handle);
 }
 "#;
     fs::write(project_path.join("src/router.rs"), router_rs).unwrap();
@@ -481,13 +489,11 @@ fn cmd_generate_middleware(name: &str) {
         r#"use crate::prelude::*;
 
 /// {name} 中间件
-pub async fn handle(
-    req: Request<Body>,
-    next: Next,
-) -> Response<Body> {{
-    // TODO: 前置逻辑
+pub async fn handle(ctx: Ctx, next: Next, parts: ReqParts) -> Response {{
+    // TODO: 前置逻辑（可用 ctx.header() / ctx.config() / ctx.services() 等）
 
-    let response = next.run(req).await;
+    // 放行到下一层
+    let response = ctx.next(next, parts).await;
 
     // TODO: 后置逻辑
 
