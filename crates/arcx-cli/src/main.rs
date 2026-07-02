@@ -548,21 +548,9 @@ impl ScheduleJob for {struct_name}Job {{
     ensure_parent(&path);
     fs::write(&path, content).unwrap();
     println!("✓ Created: {}", path);
-    println!();
-    println!("  Next steps:");
-    println!();
-    println!("  1. Add to src/schedule/mod.rs:");
-    println!("     pub mod {};", name);
-    println!("     pub use {}::{}Job;", name, struct_name);
-    println!();
-    println!("  2. Register in main.rs:");
-    println!("     mod schedule;");
-    println!("     use crate::schedule::{}Job;", struct_name);
-    println!();
-    println!("     Arcx::new()");
-    println!("         .schedule({}Job)", struct_name);
-    println!("         .run()");
-    println!("         .await;");
+
+    auto_register_job(name, &struct_name);
+    println!("✓ Registered in schedule/mod.rs + main.rs");
 }
 
 
@@ -690,6 +678,86 @@ fn auto_register_in_router(name: &str) {
             format!("{}{}{}", &content[..last_brace], new_lines, &content[last_brace..]);
         fs::write(router_path, new_content).unwrap();
     }
+}
+
+fn auto_register_job(name: &str, struct_name: &str) {
+    // 1. Ensure src/schedule/mod.rs exists and register module
+    let mod_path = Path::new("src/schedule/mod.rs");
+    let use_line = format!("pub use {}::{}Job;", name, struct_name);
+    let mod_line = format!("pub mod {};", name);
+
+    if !mod_path.exists() {
+        fs::create_dir_all("src/schedule").ok();
+        let mod_content = format!("pub mod {};
+{}\n", name, use_line);
+        fs::write(mod_path, mod_content).unwrap();
+    } else {
+        let content = fs::read_to_string(mod_path).unwrap();
+        let mut new_content = content.trim_end().to_string();
+        if !content.contains(&mod_line) {
+            new_content.push_str(&format!("\npub mod {};", name));
+        }
+        if !content.contains(&use_line) {
+            new_content.push_str(&format!("\npub use {}::{}Job;", name, struct_name));
+        }
+        new_content.push('\n');
+        fs::write(mod_path, new_content).unwrap();
+    }
+
+    // 2. Ensure `mod schedule;` in main.rs
+    let main_path = Path::new("src/main.rs");
+    if !main_path.exists() {
+        return;
+    }
+    let main_content = fs::read_to_string(main_path).unwrap();
+    let mut main_content = if !main_content.contains("mod schedule;") {
+        // Add mod schedule; after last mod line
+        let lines: Vec<&str> = main_content.lines().collect();
+        let mut last_mod_idx = 0;
+        for (i, line) in lines.iter().enumerate() {
+            if line.starts_with("mod ") {
+                last_mod_idx = i;
+            }
+        }
+        let mut new_lines: Vec<String> = lines.iter().map(|l| l.to_string()).collect();
+        new_lines.insert(last_mod_idx + 1, "mod schedule;".to_string());
+        new_lines.join("\n") + "\n"
+    } else {
+        main_content
+    };
+
+    // 3. Ensure `use crate::schedule::XxxJob;` in main.rs
+    let use_stmt = format!("use crate::schedule::{}Job;", struct_name);
+    if !main_content.contains(&use_stmt) {
+        let lines: Vec<&str> = main_content.lines().collect();
+        let mut last_use_idx = 0;
+        for (i, line) in lines.iter().enumerate() {
+            if line.starts_with("use ") {
+                last_use_idx = i;
+            }
+        }
+        let mut new_lines: Vec<String> = lines.iter().map(|l| l.to_string()).collect();
+        new_lines.insert(last_use_idx + 1, use_stmt.clone());
+        main_content = new_lines.join("\n") + "\n";
+    }
+
+    // 4. Add .schedule(XxxJob) to the Arcx builder chain
+    let schedule_call = format!(".schedule({}Job)", struct_name);
+    if !main_content.contains(&schedule_call) {
+        // Insert before .run()
+        if let Some(run_pos) = main_content.find(".run()") {
+            // Find the line containing .run() and get its indentation
+            let before_run = &main_content[..run_pos];
+            let line_start = before_run.rfind('\n').map(|p| p + 1).unwrap_or(0);
+            let line_prefix = &main_content[line_start..run_pos];
+            // line_prefix is the whitespace before .run()
+            let insert_line = format!("{}{}
+{}", line_prefix, schedule_call, line_prefix);
+            main_content = format!("{}{}{}", &main_content[..line_start], insert_line, &main_content[run_pos..]);
+        }
+    }
+
+    fs::write(main_path, main_content).unwrap();
 }
 
 // ─────────────────────────────────────────
