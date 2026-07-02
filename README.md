@@ -6,70 +6,26 @@
 
 A convention-over-configuration web framework for Rust, built on [Axum](https://github.com/tokio-rs/axum).
 
-Arc(Architecture) + X(Extensible) — 约定优于配置，开箱即用。
-
-## Features
-
-- **Free-style routing** — `r.get/post/put/delete`, no forced conventions
-- **Pure function handlers** — no traits, no macros, any parameter signature
-- **Flexible responses** — return any `impl IntoResponse`, no forced format
-- **Auth provider** — implement one trait, use any strategy (JWT/Session/OAuth)
-- **Plugin system** — database, custom plugins with lifecycle management
-- **Type-safe config** — multi-environment TOML config with hot reload
-- **Built-in security** — CSRF, XSS protection, security headers, signed sessions
-- **WebSocket** — trait-based WS handler with session management
-- **Schedule** — cron-based job scheduling
-- **HTTP Client** — reqwest wrapper with retry & exponential backoff
-- **Event Bus** — broadcast channel driven event system
-- **CLI Tool** — project scaffolding and code generation
+Arc(Architecture) + X(Extensible) — write business logic, not boilerplate.
 
 ## Quick Start
 
 ```bash
-# Install CLI
 cargo install arcx-cli
-
-# Create project
 arcx new my-app
 cd my-app
-
-# Run
 cargo run
-
-# Or with hot reload
-arcx dev
 ```
 
-## Project Structure
-
-```
-my-app/
-├── src/
-│   ├── main.rs              # Entry point
-│   ├── router.rs            # Route declarations (free style)
-│   ├── helper.rs            # Response format (your code, customizable)
-│   ├── controller/          # Handler functions
-│   ├── middleware/
-│   │   └── auth.rs          # Auth implementation (your code)
-│   ├── service/             # Business logic
-│   └── model/               # Database entities
-├── config/
-│   ├── config.default.toml
-│   └── config.prod.toml
-└── Cargo.toml
-```
-
-## Example
+## What it looks like
 
 ```rust
-// main.rs
+// src/main.rs
 use arcx_core::prelude::*;
-use crate::middleware::auth::JwtAuth;
 
 #[tokio::main]
 async fn main() {
     Arcx::new()
-        .auth(JwtAuth::new("secret"))  // optional
         .routes(router::routes)
         .run()
         .await;
@@ -77,10 +33,112 @@ async fn main() {
 ```
 
 ```rust
-// router.rs
+// src/router.rs
+pub fn routes(r: &mut ArcxRouter) {
+    r.get("/api/users/:id", controller::user::show);
+    r.post("/api/users", controller::user::create);
+
+    r.guarded_scope("/api/admin", |s| {
+        s.get("/dashboard", controller::admin::dashboard);
+    });
+}
+```
+
+```rust
+// src/controller/user.rs
+use crate::prelude::*;
+
+pub async fn show(ctx: Ctx, Path(id): Path<u64>) -> AppResult<impl IntoResponse> {
+    let user = ctx.services().user.find_by_id(id).await?;
+    Ok(response::success(user))
+}
+```
+
+```rust
+// src/service/user.rs
+use crate::prelude::*;
+
+#[service]
+impl UserService {
+    pub async fn find_by_id(&self, id: u64) -> AppResult<Value> {
+        Ok(json!({ "id": id, "name": format!("User_{}", id) }))
+    }
+}
+```
+
+## Project Structure
+
+```
+my-app/
+├── src/
+│   ├── main.rs
+│   ├── router.rs
+│   ├── prelude.rs
+│   ├── controller/
+│   │   └── home.rs
+│   ├── service/
+│   │   ├── mod.rs       # services! { user: UserService }
+│   │   └── user.rs
+│   ├── middleware/
+│   └── helper/
+│       └── response.rs  # Your response format (customizable)
+├── config/
+│   ├── config.default.toml
+│   └── config.prod.toml
+└── Cargo.toml
+```
+
+## Core Concepts
+
+### Services Container
+
+Register once, use everywhere via `ctx.services()`:
+
+```rust
+// src/service/mod.rs
+arcx_core::services! {
+    user: UserService,
+    order: OrderService,
+}
+```
+
+The `#[service]` macro generates the struct and wiring — you only write methods:
+
+```rust
+// src/service/order.rs
+use crate::prelude::*;
+
+#[service]
+impl OrderService {
+    pub async fn find_by_user(&self, user_id: &str) -> AppResult<Value> {
+        // business logic here
+    }
+}
+```
+
+Services can call each other:
+
+```rust
+#[service]
+impl UserService {
+    pub async fn find_with_orders(&self, id: &str) -> AppResult<Value> {
+        let user = self.find_by_id(id).await?;
+        let orders = self.ctx.service::<OrderService>().find_by_user(id).await?;
+        Ok(json!({ "user": user, "orders": orders }))
+    }
+}
+```
+
+### Routing
+
+Free-style routing — no macros, no forced conventions:
+
+```rust
 pub fn routes(r: &mut ArcxRouter) {
     r.get("/api/home", controller::home::index);
     r.post("/api/home", controller::home::create);
+    r.put("/api/home/:id", controller::home::update);
+    r.delete("/api/home/:id", controller::home::destroy);
 
     // Protected routes (requires .auth() in main.rs)
     r.guarded_scope("/api/admin", |s| {
@@ -89,15 +147,13 @@ pub fn routes(r: &mut ArcxRouter) {
 }
 ```
 
-```rust
-// controller/home.rs
-pub async fn index(ctx: Context) -> AppResult<impl IntoResponse> {
-    Ok(helper::success(json!({ "message": "Hello!" })))
-}
-```
+### Auth
+
+Implement the `AuthProvider` trait with any strategy (JWT, session, OAuth):
 
 ```rust
-// middleware/auth.rs — implement AuthProvider trait
+pub struct JwtAuth { secret: String }
+
 #[async_trait]
 impl AuthProvider for JwtAuth {
     async fn authenticate(&self, parts: &RequestParts) -> Result<AuthUser, AppError> {
@@ -107,33 +163,91 @@ impl AuthProvider for JwtAuth {
 }
 ```
 
+Enable it in main:
+
+```rust
+Arcx::new()
+    .auth(JwtAuth::new("secret"))
+    .routes(router::routes)
+    .run()
+    .await;
+```
+
+### Configuration
+
+Multi-environment TOML with dot-notation access:
+
+```rust
+let port: Option<u16> = ctx.get("server.port");
+let redis_url: Option<String> = ctx.get("redis.url");
+```
+
+Config files support `import` for splitting:
+```toml
+import = ["config/custom/redis.toml"]
+
+[app]
+name = "my-app"
+env = "dev"
+```
+
+### Plugins
+
+Database, caching, and custom plugins — register once, access via `ctx.plugin::<T>()`:
+
+```toml
+# config.default.toml
+[database]
+url = "postgres://localhost/mydb"
+```
+
+```rust
+let db = ctx.plugin::<DatabasePlugin>()?;
+```
+
+## Features
+
+| Category | Capabilities |
+|----------|-------------|
+| **Routing** | Free-style, guarded scopes, path params |
+| **Services** | `#[service]` macro, container pattern, inter-service calls |
+| **Auth** | Pluggable AuthProvider trait, route guards |
+| **Config** | Multi-env TOML, dot-notation, import, hot reload |
+| **Plugins** | Database (SeaORM), JWT, custom plugin trait |
+| **Middleware** | CORS, request logger, security headers, CSRF |
+| **Session** | HMAC-signed cookies, extensible store |
+| **WebSocket** | Trait-based handler, session management |
+| **Schedule** | Cron-based job scheduling |
+| **HTTP Client** | Retry, exponential backoff |
+| **Events** | Broadcast channel event bus |
+| **Logging** | tracing with rolling files, trace ID |
+| **CLI** | Project scaffolding, code generation, hot reload dev server |
+
+## CLI
+
+```bash
+arcx new my-app           # Create project
+arcx g c user             # Generate controller
+arcx g s user             # Generate service
+arcx g m user             # Generate model
+arcx g j cleanup          # Generate scheduled job
+arcx dev                  # Dev server with hot reload
+arcx info                 # Project stats
+```
+
 ## Middleware Philosophy
 
 Every middleware has exactly two outcomes:
-- **Pass** → `next()`, optionally inject data for the handler
-- **Block** → return response directly (the handler never runs)
+- **Pass** → call next, optionally inject data
+- **Block** → return response directly
 
-## CLI Commands
+## Design Principles
 
-| Command | Alias | Description |
-|---------|-------|-------------|
-| `arcx new <name>` | - | Create new project |
-| `arcx generate controller <name>` | `arcx g c` | Generate controller |
-| `arcx generate service <name>` | `arcx g s` | Generate service |
-| `arcx generate model <name>` | `arcx g m` | Generate model |
-| `arcx generate job <name>` | `arcx g j` | Generate job |
-| `arcx dev [-p port]` | - | Dev server with hot reload |
-| `arcx info` | - | Project stats |
-
-## Architecture
-
-```
-crates/
-├── arcx-core/     # Framework library
-└── arcx-cli/      # CLI scaffolding tool
-examples/
-└── demo/          # Working example application
-```
+- Convention over configuration — sensible defaults, minimal boilerplate
+- One declaration, globally available — `services!{}` is the Rust-appropriate boundary
+- Ctx is optional — handlers that don't need it simply don't declare it
+- Your code, your rules — response format, auth strategy, middleware are all yours to define
+- Zero runtime reflection — everything resolved at compile time
 
 ## License
 
