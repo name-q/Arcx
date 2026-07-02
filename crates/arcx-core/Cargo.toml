@@ -29,7 +29,7 @@ tracing-appender = "0.2"
 chrono = "0.4"
 
 # Validation
-validator = { version = "0.18", features = ["derive"] }
+validator = { version = "0.20", features = ["derive"] }
 
 # Database (optional)
 sea-orm = { version = "1.0", features = ["sqlx-sqlite", "runtime-tokio-rustls", "macros"], optional = true }

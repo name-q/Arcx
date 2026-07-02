@@ -2,7 +2,7 @@
 
 /// `services!` — 一行注册所有 Service
 ///
-/// 生成模块声明、Services 容器、ServiceAccess trait。
+/// 生成模块声明、类型 re-export、Services 容器、ServiceAccess trait。
 /// Controller 通过 `ctx.services().user.xxx()` 调用。
 ///
 /// ## 用法
@@ -17,7 +17,7 @@
 ///
 /// ```rust
 /// // src/controller/home.rs
-/// use crate::service::ServiceAccess;
+/// use crate::prelude::*;
 ///
 /// pub async fn show(ctx: Ctx) -> AppResult<impl IntoResponse> {
 ///     let user = ctx.services().user.find_by_id(42).await?;
@@ -30,6 +30,11 @@ macro_rules! services {
         // 模块声明
         $(
             pub mod $field;
+        )*
+
+        // 自动 re-export 所有 Service 类型
+        $(
+            pub use $field::$service_type;
         )*
 
         /// 自动生成的 Services 容器

@@ -2,10 +2,10 @@
 //!
 //! 命令：
 //! - arcx new <project>              创建新项目
-//! - arcx generate controller <name> 生成 controller
-//! - arcx generate service <name>    生成 service
-//! - arcx generate model <name>      生成 model
-//! - arcx generate job <name>        生成定时任务
+//! - arcx generate controller <name> 生成 controller (alias: c)
+//! - arcx generate service <name>    生成 service    (alias: s)
+//! - arcx generate middleware <name> 生成 middleware  (alias: m)
+//! - arcx generate job <name>        生成定时任务     (alias: j)
 //! - arcx dev                        启动开发服务器（热重载）
 //! - arcx info                       显示项目信息
 
@@ -52,9 +52,9 @@ enum GenerateTarget {
     /// 生成 service
     #[command(alias = "s")]
     Service { name: String },
-    /// 生成 model
+    /// 生成 middleware
     #[command(alias = "m")]
-    Model { name: String },
+    Middleware { name: String },
     /// 生成定时任务
     #[command(alias = "j")]
     Job { name: String },
@@ -68,7 +68,7 @@ fn main() {
         Commands::Generate { what } => match what {
             GenerateTarget::Controller { name } => cmd_generate_controller(&name),
             GenerateTarget::Service { name } => cmd_generate_service(&name),
-            GenerateTarget::Model { name } => cmd_generate_model(&name),
+            GenerateTarget::Middleware { name } => cmd_generate_middleware(&name),
             GenerateTarget::Job { name } => cmd_generate_job(&name),
         },
         Commands::Dev { port } => dev::run(port),
@@ -99,7 +99,6 @@ fn cmd_new(name: &str) {
     let dirs = [
         "src/controller",
         "src/service",
-        "src/model",
         "src/middleware",
         "src/helper",
         "config",
@@ -192,8 +191,8 @@ hsts = true
     let prelude_rs = r#"//! 项目 Prelude — 所有模块统一使用 `use crate::prelude::*;`
 
 pub use arcx_core::prelude::*;
-pub use crate::helper::response;
-pub use crate::service::ServiceAccess;
+pub use crate::helper::*;
+pub use crate::service::{ServiceAccess, *};
 "#;
     fs::write(project_path.join("src/prelude.rs"), prelude_rs).unwrap();
 
@@ -205,7 +204,7 @@ mod prelude;
 mod router;
 mod service;
 
-use arcx_core::prelude::*;
+use crate::prelude::*;
 
 #[tokio::main]
 async fn main() {
@@ -276,7 +275,7 @@ pub fn fail(code: i32, msg: &str) -> impl IntoResponse {
     fs::write(project_path.join("src/helper/response.rs"), helper_response).unwrap();
 
     // src/router.rs
-    let router_rs = r#"use arcx_core::prelude::*;
+    let router_rs = r#"use crate::prelude::*;
 use crate::controller;
 
 pub fn routes(r: &mut ArcxRouter) {
@@ -335,9 +334,6 @@ impl UserService {
 
     // src/middleware/mod.rs
     fs::write(project_path.join("src/middleware/mod.rs"), "").unwrap();
-
-    // src/model (empty mod)
-    fs::write(project_path.join("src/model/mod.rs"), "").unwrap();
 
     // .gitignore
     let gitignore = "target/\n*.db\n.env\n.DS_Store\nlogs/\n";
@@ -468,37 +464,35 @@ impl {struct_name}Service {{
     println!("✓ Registered in services! {{}}");
 }
 
+
 // ─────────────────────────────────────────
-// arcx generate model <name>
+// arcx generate middleware <name>
 // ─────────────────────────────────────────
 
-fn cmd_generate_model(name: &str) {
+fn cmd_generate_middleware(name: &str) {
     ensure_in_project();
-    let path = format!("src/model/{}.rs", name);
+    let path = format!("src/middleware/{}.rs", name);
     if Path::new(&path).exists() {
-        eprintln!("✗ Model '{}' already exists at {}", name, path);
+        eprintln!("✗ Middleware '{}' already exists at {}", name, path);
         std::process::exit(1);
     }
 
-    let _struct_name = to_pascal_case(name);
     let content = format!(
-        r#"use sea_orm::entity::prelude::*;
-use serde::{{Deserialize, Serialize}};
+        r#"use crate::prelude::*;
 
-#[derive(Clone, Debug, PartialEq, DeriveEntityModel, Serialize, Deserialize)]
-#[sea_orm(table_name = "{name}")]
-pub struct Model {{
-    #[sea_orm(primary_key)]
-    pub id: i64,
-    pub name: String,
-    pub created_at: DateTimeUtc,
-    pub updated_at: DateTimeUtc,
+/// {name} 中间件
+pub async fn handle(
+    req: Request<Body>,
+    next: Next,
+) -> Response<Body> {{
+    // TODO: 前置逻辑
+
+    let response = next.run(req).await;
+
+    // TODO: 后置逻辑
+
+    response
 }}
-
-#[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
-pub enum Relation {{}}
-
-impl ActiveModelBehavior for ActiveModel {{}}
 "#
     );
 
@@ -506,8 +500,8 @@ impl ActiveModelBehavior for ActiveModel {{}}
     fs::write(&path, content).unwrap();
     println!("✓ Created: {}", path);
 
-    auto_register_mod("src/model/mod.rs", name);
-    println!("✓ Registered in model/mod.rs");
+    auto_register_mod("src/middleware/mod.rs", name);
+    println!("✓ Registered in middleware/mod.rs");
 }
 
 // ─────────────────────────────────────────
@@ -524,7 +518,7 @@ fn cmd_generate_job(name: &str) {
 
     let struct_name = to_pascal_case(name);
     let content = format!(
-        r#"use arcx_core::prelude::*;
+        r#"use crate::prelude::*;
 
 pub struct {struct_name}Job;
 
@@ -589,13 +583,11 @@ fn cmd_info() {
 
     let controllers = count_rs_files("src/controller");
     let services = count_rs_files("src/service");
-    let models = count_rs_files("src/model");
     let helpers = count_rs_files("src/helper");
     let middlewares = count_rs_files("src/middleware");
 
     println!("  Controllers:  {}", controllers);
     println!("  Services:     {}", services);
-    println!("  Models:       {}", models);
     println!("  Helpers:      {}", helpers);
     println!("  Middlewares:  {}", middlewares);
 }
