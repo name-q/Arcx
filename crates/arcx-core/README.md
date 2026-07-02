@@ -4,19 +4,16 @@ The core library of **Arcx** — a convention-over-configuration web framework f
 
 ## Features
 
-- **Free-style routing** — `r.get/post/put/delete` with any handler signature
-- **Ctx — optional request-scoped service locator** — config, plugins, service discovery
-- **Service trait** — `ctx.service::<T>()` lazy creation + per-request caching + inter-service calls
-- **Zero-boilerplate controllers** — pure async functions, Ctx optional
-- **Flexible responses** — return any `impl IntoResponse`, no forced format
-- **Plugin system** — Database, JWT, custom plugins with resource injection
-- **Auth provider** — implement `AuthProvider` trait, use any auth strategy
-- **Auto middleware** — CORS, logging, security headers, configurable
-- **Multi-env config** — TOML config with environment-based overrides, import support
-- **Error handling** — `AppError` with proper HTTP status codes (400/401/404/422/500)
-- **Route guards** — `guarded_scope` for authenticated routes
-- **Validation** — `ValidJson<T>` with validator derive macros
-- **And more** — WebSocket, Schedule jobs, EventBus, HttpClient, Session
+- **Free-style routing** — `r.get/post/put/delete` with global/scope/route-level middleware
+- **Ctx** — optional request-scoped service locator with quick access methods
+- **Services** — `#[service]` macro + `services!{}` container, inter-service calls
+- **Middleware** — shares same Ctx with controllers, onion model, `ctx.set()`/`ctx.get::<T>()`
+- **Auth** — implement `AuthProvider` trait, use any strategy (JWT/Session/OAuth)
+- **Config** — multi-env TOML, dot-notation `ctx.conf("key")`, import support, hot reload
+- **Plugins** — Database, JWT, custom plugins with resource injection
+- **Schedule** — cron-based job scheduling via `ScheduleJob` trait
+- **Security** — CORS, CSRF, XSS protection, security headers (each independently configurable)
+- **And more** — WebSocket, EventBus, HttpClient, Session, tracing
 
 ## Quick Start
 
@@ -31,148 +28,151 @@ mod router;
 #[tokio::main]
 async fn main() {
     Arcx::new()
-        // .auth(MyAuth::new("secret"))  // optional: enable guarded_scope
         .routes(router::routes)
         .run()
         .await;
 }
 ```
 
-### router.rs — Free-style routing
+### Routing — three levels of middleware
 
 ```rust
-use arcx_core::prelude::*;
-use crate::controller;
-
 pub fn routes(r: &mut ArcxRouter) {
-    // Public routes
-    r.get("/api/home", controller::home::index);
-    r.get("/api/home/:id", controller::home::show);
-    r.post("/api/home", controller::home::create);
+    // Global
+    r.middleware(middleware::log::handle);
 
-    // Authenticated routes (requires .auth() in main.rs)
+    // Standard
+    r.get("/api/home", controller::home::index);
+
+    // Route-level (chainable)
+    r.get("/api/admin", controller::admin::dashboard)
+        .middleware(middleware::auth::handle);
+
+    // Scope-level
+    r.scope("/api/v2", |s| {
+        s.middleware(middleware::auth::handle);
+        s.get("/users", controller::user::list);
+    });
+
+    // Guarded scope (requires .auth() in main.rs)
     r.guarded_scope("/api/admin", |s| {
         s.get("/profile", controller::admin::profile);
     });
 }
 ```
 
-### Ctx — Request-scoped service locator (optional)
+### Middleware — same Ctx as controllers
 
 ```rust
 use arcx_core::prelude::*;
 
-// Don't need Ctx? Don't write it.
-pub async fn destroy(Path(id): Path<u64>) -> AppResult<impl IntoResponse> {
-    Ok(response::no_content())
-}
-
-// Need config/plugins/services? Add Ctx.
-pub async fn show(ctx: Ctx, Path(id): Path<u64>) -> AppResult<impl IntoResponse> {
+pub async fn handle(ctx: Ctx, next: Next, parts: ReqParts) -> Response {
     let env = ctx.env();
-    let user = ctx.service::<UserService>().find_by_id(id).await?;
-    Ok(Json(user))
+    ctx.set(MyData { role: "admin".into() });
+    ctx.next(next, parts).await
 }
 ```
 
-### Service trait — Inter-service calls
+### Ctx — request-scoped service locator (optional)
 
 ```rust
-use std::sync::Arc;
-use arcx_core::prelude::*;
-
-pub struct UserService {
-    ctx: Ctx,
+pub async fn show(ctx: Ctx, Path(id): Path<u64>) -> AppResult<impl IntoResponse> {
+    let host = ctx.header("host");
+    let ip = ctx.ip();
+    let params: MyQuery = ctx.query()?;
+    let port: Option<u16> = ctx.conf("server.port");
+    let user = ctx.services().user.find_by_id(id).await?;
+    Ok(Json(user))
 }
 
-impl Service for UserService {
-    fn create(ctx: &Ctx) -> Arc<Self> {
-        Arc::new(Self { ctx: ctx.clone() })
-    }
-}
+// Don't need Ctx? Don't write it.
+pub async fn health() -> &'static str { "ok" }
+```
 
+### Services — `#[service]` macro
+
+```rust
+use crate::prelude::*;
+
+#[service]
 impl UserService {
-    pub async fn find_with_orders(&self, id: i64) -> AppResult<Value> {
+    pub async fn find_by_id(&self, id: u64) -> AppResult<Value> {
+        Ok(json!({ "id": id, "name": format!("User_{}", id) }))
+    }
+
+    pub async fn find_with_orders(&self, id: u64) -> AppResult<Value> {
         let user = self.find_by_id(id).await?;
-        // Inter-service call — just like ctx.service.order in other frameworks
         let orders = self.ctx.service::<OrderService>().find_by_user(id).await?;
         Ok(json!({ "user": user, "orders": orders }))
     }
 }
 ```
 
-### Auth — Implement your own strategy
+### Configuration — each feature self-contained
+
+```toml
+[server]
+port = 3000
+
+[cors]
+enable = true
+allowed_origins = ["*"]
+allowed_methods = ["GET", "POST", "PUT", "DELETE"]
+
+[request_logger]
+enable = true
+
+[security]
+enable = true
+csrf = false
+```
+
+### Auth — pluggable
 
 ```rust
-use arcx_core::prelude::*;
-
 pub struct JwtAuth { secret: String }
 
 #[async_trait]
 impl AuthProvider for JwtAuth {
     async fn authenticate(&self, parts: &RequestParts) -> Result<AuthUser, AppError> {
-        let token = parts.headers
-            .get("Authorization")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.strip_prefix("Bearer "))
-            .ok_or(AppError::unauthorized("Missing token"))?;
-
-        let claims = verify_jwt(token, &self.secret)?;
-
-        Ok(AuthUser {
-            id: claims.sub,
-            payload: json!({ "role": claims.role }),
-        })
+        // your logic
+        Ok(AuthUser { id: "user_1".into(), payload: json!({}) })
     }
 }
 ```
 
-### helper/ — Your utilities (customizable)
-
-The `src/helper/` directory is **your code** — the framework doesn't depend on it. Put response formatters, crypto helpers, date utils, or anything you need:
-
+```rust
+Arcx::new()
+    .auth(JwtAuth::new("secret"))
+    .routes(router::routes)
+    .run()
+    .await;
 ```
-src/helper/
-├── mod.rs        # re-exports
-├── response.rs   # response format helpers
-├── crypto.rs     # your crypto utils
-└── time.rs       # your date/time utils
-```
+
+### Schedule jobs
 
 ```rust
-// src/helper/response.rs
-pub fn success<T: Serialize>(data: T) -> impl IntoResponse {
-    Json(json!({ "code": 0, "data": data, "message": "success" }))
+pub struct CleanupJob;
+
+impl ScheduleJob for CleanupJob {
+    fn name(&self) -> &str { "cleanup" }
+    fn cron(&self) -> &str { "0 */5 * * * *" }
+    fn run(&self) -> Pin<Box<dyn Future<Output = ()> + Send>> {
+        Box::pin(async { println!("[CleanupJob] executing"); })
+    }
 }
 ```
 
-### Error handling
-
 ```rust
-return Err(AppError::not_found("User not found"));
-return Err(AppError::unauthorized("Login required"));
-return Err(AppError::validation(vec![
-    FieldError { field: "title".into(), message: "required".into(), code: "missing_field".into() }
-]));
-```
-
-## Project Structure
-
-```
-src/
-├── main.rs           # Entry point
-├── router.rs         # Route declarations (free style)
-├── helper/           # Response helpers & utilities (your code)
-├── controller/       # Handler functions (Ctx optional)
-├── service/          # Business logic (Service trait)
-├── middleware/       # Auth & custom middleware
-└── model/            # Database entities
-config/
-├── config.default.toml
-└── config.prod.toml
+Arcx::new()
+    .routes(router::routes)
+    .schedule(CleanupJob)
+    .run()
+    .await;
 ```
 
 ## Links
 
 - [GitHub](https://github.com/name-q/Arcx)
 - [arcx-cli](https://crates.io/crates/arcx-cli) — CLI scaffolding tool
+- [arcx-macros](https://crates.io/crates/arcx-macros) — Proc macros (`#[service]`)

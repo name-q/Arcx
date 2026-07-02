@@ -80,6 +80,7 @@ my-app/
 │   │   ├── mod.rs       # services! { user: UserService }
 │   │   └── user.rs
 │   ├── middleware/
+│   ├── schedule/
 │   └── helper/
 │       └── response.rs  # Your response format (customizable)
 ├── config/
@@ -135,15 +136,89 @@ Free-style routing — no macros, no forced conventions:
 
 ```rust
 pub fn routes(r: &mut ArcxRouter) {
+    // Global middleware
+    r.middleware(middleware::log::handle);
+
+    // Standard routes
     r.get("/api/home", controller::home::index);
     r.post("/api/home", controller::home::create);
-    r.put("/api/home/:id", controller::home::update);
-    r.delete("/api/home/:id", controller::home::destroy);
+
+    // Route-level middleware (chainable)
+    r.get("/api/admin", controller::admin::dashboard)
+        .middleware(middleware::auth::handle);
+
+    // Scoped middleware
+    r.scope("/api/v2", |s| {
+        s.middleware(middleware::auth::handle);
+        s.get("/users", controller::user::list);
+    });
 
     // Protected routes (requires .auth() in main.rs)
     r.guarded_scope("/api/admin", |s| {
         s.get("/profile", controller::admin::profile);
     });
+}
+```
+
+### Middleware
+
+Middleware and Controller share the same `Ctx`, same API:
+
+```rust
+use crate::prelude::*;
+
+pub async fn handle(ctx: Ctx, next: Next, parts: ReqParts) -> Response {
+    let start = std::time::Instant::now();
+
+    // Access config, services, headers — same as controller
+    let env = ctx.env();
+
+    // Inject data for downstream
+    ctx.set(MyData { role: "admin".into() });
+
+    // Pass through
+    let response = ctx.next(next, parts).await;
+
+    println!("Request took {:?}", start.elapsed());
+    response
+}
+```
+
+Controllers retrieve middleware-injected data via `ctx.get::<T>()`:
+
+```rust
+pub async fn dashboard(ctx: Ctx) -> AppResult<impl IntoResponse> {
+    let data = ctx.get::<MyData>().unwrap();
+    Ok(Json(json!({ "role": data.role })))
+}
+```
+
+### Ctx — Request-scoped service locator
+
+```rust
+pub async fn show(ctx: Ctx, Path(id): Path<u64>) -> AppResult<impl IntoResponse> {
+    // Quick access methods
+    let method = ctx.method();
+    let path = ctx.path();
+    let host = ctx.header("host");
+    let ip = ctx.ip();
+    let params: MyQuery = ctx.query()?;
+
+    // Config access (dot notation)
+    let port: Option<u16> = ctx.conf("server.port");
+    let redis_url: Option<String> = ctx.conf("redis.url");
+
+    // Services
+    let user = ctx.services().user.find_by_id(id).await?;
+    Ok(Json(user))
+}
+```
+
+Ctx is optional — handlers that don't need it simply don't declare it:
+
+```rust
+pub async fn health() -> &'static str {
+    "ok"
 }
 ```
 
@@ -175,11 +250,31 @@ Arcx::new()
 
 ### Configuration
 
-Multi-environment TOML with dot-notation access:
+Multi-environment TOML. Each middleware/feature manages its own section:
 
-```rust
-let port: Option<u16> = ctx.get("server.port");
-let redis_url: Option<String> = ctx.get("redis.url");
+```toml
+# config/config.default.toml
+[server]
+port = 3000
+
+[cors]
+enable = true
+allowed_origins = ["*"]
+allowed_methods = ["GET", "POST", "PUT", "DELETE"]
+allow_credentials = false
+max_age = 86400
+
+[request_logger]
+enable = true
+
+[security]
+enable = true
+csrf = false
+xss_protection = true
+frame_deny = true
+
+[database]
+url = "postgres://localhost/mydb"
 ```
 
 Config files support `import` for splitting:
@@ -188,18 +283,43 @@ import = ["config/custom/redis.toml"]
 
 [app]
 name = "my-app"
-env = "dev"
+```
+
+### Schedule Jobs
+
+Cron-based job scheduling:
+
+```rust
+// src/schedule/cleanup.rs
+use arcx_core::prelude::*;
+
+pub struct CleanupJob;
+
+impl ScheduleJob for CleanupJob {
+    fn name(&self) -> &str { "cleanup" }
+    fn cron(&self) -> &str { "0 */5 * * * *" }  // every 5 minutes
+
+    fn run(&self) -> Pin<Box<dyn Future<Output = ()> + Send>> {
+        Box::pin(async {
+            println!("[CleanupJob] executing");
+        })
+    }
+}
+```
+
+Register in main:
+
+```rust
+Arcx::new()
+    .routes(router::routes)
+    .schedule(CleanupJob)
+    .run()
+    .await;
 ```
 
 ### Plugins
 
 Database, caching, and custom plugins — register once, access via `ctx.plugin::<T>()`:
-
-```toml
-# config.default.toml
-[database]
-url = "postgres://localhost/mydb"
-```
 
 ```rust
 let db = ctx.plugin::<DatabasePlugin>()?;
@@ -209,43 +329,41 @@ let db = ctx.plugin::<DatabasePlugin>()?;
 
 | Category | Capabilities |
 |----------|-------------|
-| **Routing** | Free-style, guarded scopes, path params |
+| **Routing** | Free-style, guarded scopes, path params, nested scopes |
+| **Middleware** | Global / scope / route-level, onion model, Ctx shared |
 | **Services** | `#[service]` macro, container pattern, inter-service calls |
 | **Auth** | Pluggable AuthProvider trait, route guards |
 | **Config** | Multi-env TOML, dot-notation, import, hot reload |
 | **Plugins** | Database (SeaORM), JWT, custom plugin trait |
-| **Middleware** | CORS, request logger, security headers, CSRF |
 | **Session** | HMAC-signed cookies, extensible store |
 | **WebSocket** | Trait-based handler, session management |
 | **Schedule** | Cron-based job scheduling |
 | **HTTP Client** | Retry, exponential backoff |
 | **Events** | Broadcast channel event bus |
 | **Logging** | tracing with rolling files, trace ID |
-| **CLI** | Project scaffolding, code generation, hot reload dev server |
+| **Security** | CORS, CSRF, XSS protection, security headers |
+| **CLI** | Project scaffolding, code generation (auto-register), hot reload |
 
 ## CLI
 
 ```bash
 arcx new my-app           # Create project
-arcx g c user             # Generate controller
-arcx g s user             # Generate service
-arcx g m user             # Generate model
-arcx g j cleanup          # Generate scheduled job
+arcx g c user             # Generate controller (auto-register)
+arcx g s user             # Generate service (auto-register)
+arcx g m auth             # Generate middleware (auto-register)
+arcx g j cleanup          # Generate scheduled job (auto-register)
 arcx dev                  # Dev server with hot reload
 arcx info                 # Project stats
 ```
 
-## Middleware Philosophy
-
-Every middleware has exactly two outcomes:
-- **Pass** → call next, optionally inject data
-- **Block** → return response directly
+All generators auto-register into `mod.rs`, `router.rs`, or `main.rs` — zero manual wiring.
 
 ## Design Principles
 
 - Convention over configuration — sensible defaults, minimal boilerplate
 - One declaration, globally available — `services!{}` is the Rust-appropriate boundary
 - Ctx is optional — handlers that don't need it simply don't declare it
+- Middleware and Controller share the same Ctx — same API, same capabilities
 - Your code, your rules — response format, auth strategy, middleware are all yours to define
 - Zero runtime reflection — everything resolved at compile time
 
