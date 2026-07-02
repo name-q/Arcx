@@ -535,7 +535,7 @@ impl ScheduleJob for {struct_name}Job {{
     }}
 
     fn cron(&self) -> &str {{
-        "0 */5 * * * *"
+        "0 */5 * * * *"  // 每5分钟执行
     }}
 
     async fn run(&self, _ctx: &JobContext) {{
@@ -548,8 +548,23 @@ impl ScheduleJob for {struct_name}Job {{
     ensure_parent(&path);
     fs::write(&path, content).unwrap();
     println!("✓ Created: {}", path);
-    println!("  Register in main.rs: schedule_manager.register({}Job);", struct_name);
+    println!();
+    println!("  Next steps:");
+    println!();
+    println!("  1. Add to src/schedule/mod.rs:");
+    println!("     pub mod {};", name);
+    println!("     pub use {}::{}Job;", name, struct_name);
+    println!();
+    println!("  2. Register in main.rs:");
+    println!("     mod schedule;");
+    println!("     use crate::schedule::{}Job;", struct_name);
+    println!();
+    println!("     Arcx::new()");
+    println!("         .schedule({}Job)", struct_name);
+    println!("         .run()");
+    println!("         .await;");
 }
+
 
 // ─────────────────────────────────────────
 // arcx info

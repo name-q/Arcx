@@ -109,6 +109,7 @@ use guard::AuthProvider;
 pub struct Arcx {
     routes_fn: Option<Box<dyn FnOnce(&mut router::ArcxRouter) + Send>>,
     auth_provider: Option<Box<dyn AuthProvider>>,
+    schedule_jobs: Vec<Box<dyn schedule::ScheduleJob>>,
 }
 
 impl Arcx {
@@ -116,7 +117,14 @@ impl Arcx {
         Self {
             routes_fn: None,
             auth_provider: None,
+            schedule_jobs: Vec::new(),
         }
+    }
+
+    /// 注册定时任务
+    pub fn schedule(mut self, job: impl schedule::ScheduleJob) -> Self {
+        self.schedule_jobs.push(Box::new(job));
+        self
     }
 
     pub fn auth(mut self, provider: impl AuthProvider) -> Self {
@@ -181,10 +189,28 @@ impl Arcx {
         }
         let app_router = arcx_router.build(&state);
 
-        // 9. 应用中间件
+        // 9. 启动 Schedule
+        if cfg.schedule.enable && !self.schedule_jobs.is_empty() {
+            let mut schedule_manager = schedule::manager::ScheduleManager::new();
+            for job in self.schedule_jobs {
+                schedule_manager.register_boxed(job);
+            }
+            let resources_arc = state.resources_ref().clone();
+            if let Err(e) = schedule_manager.start(Arc::new(cfg.clone()), resources_arc).await {
+                tracing::error!("Schedule start failed: {}", e);
+            } else {
+                // Keep manager alive
+                tokio::spawn(async move {
+                    tokio::signal::ctrl_c().await.ok();
+                    schedule_manager.shutdown().await;
+                });
+            }
+        }
+
+        // 10. 应用中间件
         let app = middleware::apply_global_middleware(app_router, &cfg).with_state(state);
 
-        // 10. 启动服务
+        // 11. 启动服务
         let addr = format!("{}:{}", cfg.server.host, cfg.server.port);
         tracing::info!("Arcx server running at http://{}", addr);
 
@@ -197,7 +223,7 @@ impl Arcx {
             .await
             .unwrap();
 
-        // 11. 清理
+        // 12. 清理
         plugin_manager.shutdown_all().await;
         tracing::info!("Server stopped.");
     }

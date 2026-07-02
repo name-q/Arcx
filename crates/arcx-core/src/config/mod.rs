@@ -58,6 +58,19 @@ impl Default for MiddlewareConfig {
     }
 }
 
+/// 定时任务配置
+#[derive(Debug, Deserialize, Clone)]
+pub struct ScheduleConfig {
+    #[serde(default)]
+    pub enable: bool,
+}
+
+impl Default for ScheduleConfig {
+    fn default() -> Self {
+        Self { enable: false }
+    }
+}
+
 /// 顶层配置结构（强类型 + 动态扩展）
 #[derive(Debug, Deserialize, Clone)]
 pub struct AppConfig {
@@ -73,6 +86,8 @@ pub struct AppConfig {
     pub session: Option<crate::session::SessionConfig>,
     #[serde(default)]
     pub security: Option<crate::middleware::security::SecurityConfig>,
+    #[serde(default)]
+    pub schedule: ScheduleConfig,
 
     /// 原始配置（保留所有字段，支持动态索引）
     #[serde(skip)]

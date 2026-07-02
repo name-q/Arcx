@@ -34,6 +34,12 @@ impl ScheduleManager {
         self.jobs.push(Box::new(job));
     }
 
+    /// 注册一个已装箱的定时任务
+    pub fn register_boxed(&mut self, job: Box<dyn ScheduleJob>) {
+        tracing::info!("  Schedule job registered: {} [{}]", job.name(), job.cron());
+        self.jobs.push(job);
+    }
+
     /// 启动调度器
     /// 将所有注册的任务添加到 cron 调度器并开始执行
     pub async fn start(
